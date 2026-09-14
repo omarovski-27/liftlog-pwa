@@ -1,0 +1,61 @@
+:root {
+  --page: #ececeb;
+  --surface: #ffffff;
+  --soft: #f3f3f2;
+  --line: #dededc;
+  --line-strong: #c7c7c4;
+  --ink: #141414;
+  --muted: #6d6d69;
+  --faint: #969691;
+  --signal: #ed5936;
+  --positive: #22744b;
+  --danger: #b9382f;
+
+  background: var(--page);
+  color: var(--ink);
+  font-family: "Helvetica Neue", Arial, system-ui, sans-serif;
+  font-synthesis: none;
+  line-height: 1.4;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  background: var(--page);
+}
+
+body {
+  margin: 0;
+}
+
+button,
+input,
+textarea,
+select {
+  color: inherit;
+  font: inherit;
+}
+
+button {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+summary:focus-visible {
+  outline: 2px solid var(--signal);
+  outline-offset: 2px;
+}
+
+#root {
+  background: var(--surface);
+  margin: 0 auto;
+  max-width: 720px;
+  min-height: 100svh;
+}
