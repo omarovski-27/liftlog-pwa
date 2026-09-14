@@ -38,6 +38,13 @@ export interface ChestVolumeRamp {
   note: string
 }
 
+export interface ExerciseWeekOverride {
+  startWeek: number
+  endWeek: number
+  sets?: number
+  reps?: string
+}
+
 export interface ExerciseTemplate {
   id: string
   name: string
@@ -49,6 +56,7 @@ export interface ExerciseTemplate {
   rest: string
   notes?: string
   section: string
+  weekOverrides?: ExerciseWeekOverride[]
   pair?: {
     group: string
     label: PairLabel
@@ -76,6 +84,7 @@ export interface TrainingProgram {
   fullRestDay: string
   status: ProgramStatus
   currentWeek: number
+  seedRevision?: number
   startedAt?: string
   phases: ProgramPhase[]
   chestVolumeRamp: ChestVolumeRamp[]

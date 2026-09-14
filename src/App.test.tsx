@@ -314,6 +314,37 @@ describe('App', () => {
     expect(await liftLogDb.programVersions.count()).toBe(2)
   })
 
+  it('creates a week-specific set prescription in the visual builder', async () => {
+    render(<App />)
+    await screen.findByText('Chest Specialization Block')
+    fireEvent.click(screen.getByRole('button', { name: 'Program' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'New' }))
+
+    fireEvent.change(screen.getByLabelText('Program name'), {
+      target: { value: 'Volume Ramp' },
+    })
+    fireEvent.change(screen.getByLabelText('Exercise 1 name'), {
+      target: { value: 'Bench press' },
+    })
+    fireEvent.click(screen.getByLabelText('Chest'))
+    fireEvent.click(screen.getByRole('button', { name: 'Add change' }))
+    fireEvent.change(screen.getByLabelText('End week'), { target: { value: '2' } })
+    fireEvent.change(screen.getByLabelText('Sets', { selector: 'input[placeholder="Base"]' }), {
+      target: { value: '2' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Create program' }))
+
+    expect(await screen.findByRole('status')).toHaveTextContent('Program created')
+    const activeProgramId = await getActiveProgramId()
+    const version = await liftLogDb.programVersions
+      .where('programId')
+      .equals(activeProgramId!)
+      .first()
+    expect(version?.program.workouts[0].exercises[0].weekOverrides).toEqual([
+      { startWeek: 1, endWeek: 2, sets: 2, reps: undefined },
+    ])
+  })
+
   it('reviews and activates an imported AI program', async () => {
     render(<App />)
     await screen.findByText('Chest Specialization Block')

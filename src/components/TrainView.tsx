@@ -8,6 +8,7 @@ import {
 } from '../lib/sessions'
 import {
   getProgramCurrentWeek,
+  getExercisePrescription,
   getRemainingProgramSessions,
   getWorkingSetCount,
 } from '../lib/programMetrics'
@@ -80,7 +81,7 @@ export function TrainView({
         <span className="section-label">{activeSession ? 'In progress' : 'Next workout'}</span>
         <h1 id="next-workout-heading">{actionWorkout.shortTitle}</h1>
         <p>
-          {actionWorkout.scheduledDay} / {getWorkingSetCount(actionWorkout)} working sets
+          {actionWorkout.scheduledDay} / {getWorkingSetCount(actionWorkout, currentWeek)} working sets
         </p>
         <button
           className="primary-button"
@@ -117,7 +118,7 @@ export function TrainView({
                   <span className="workout-row-copy">
                     <strong>{workout.shortTitle}</strong>
                     <small>
-                      {workout.scheduledDay} / {getWorkingSetCount(workout)} sets
+                      {workout.scheduledDay} / {getWorkingSetCount(workout, currentWeek)} sets
                       {lastSession ? ` / Last ${formatShortDate(lastSession)}` : ''}
                     </small>
                   </span>
@@ -132,6 +133,7 @@ export function TrainView({
                 {selected ? (
                   <WorkoutOutline
                     activeSession={activeSession}
+                    weekNumber={currentWeek}
                     workout={workout}
                     onResumeWorkout={onResumeWorkout}
                     onStartWorkout={onStartWorkout}
@@ -149,6 +151,7 @@ export function TrainView({
 interface WorkoutOutlineProps {
   workout: WorkoutTemplate
   activeSession: WorkoutSession | undefined
+  weekNumber: number
   onStartWorkout: (workout: WorkoutTemplate) => void
   onResumeWorkout: (session: WorkoutSession) => void
 }
@@ -156,6 +159,7 @@ interface WorkoutOutlineProps {
 function WorkoutOutline({
   workout,
   activeSession,
+  weekNumber,
   onStartWorkout,
   onResumeWorkout,
 }: WorkoutOutlineProps) {
@@ -163,14 +167,17 @@ function WorkoutOutline({
     <div className="workout-outline">
       <p className="outline-note">{workout.sourceSummary}</p>
       <ol>
-        {workout.exercises.map((exercise) => (
-          <li key={exercise.id}>
-            <span>{exercise.name}</span>
-            <strong>
-              {exercise.sets} x {exercise.reps}
-            </strong>
-          </li>
-        ))}
+        {workout.exercises.map((exercise) => {
+          const prescription = getExercisePrescription(exercise, weekNumber)
+          return (
+            <li data-adjusted={prescription.overridden || undefined} key={exercise.id}>
+              <span>{exercise.name}</span>
+              <strong>
+                {prescription.sets} x {prescription.reps}
+              </strong>
+            </li>
+          )
+        })}
       </ol>
       <button
         className="secondary-button full-width"

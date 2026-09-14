@@ -31,7 +31,10 @@ LiftLog accepts local JSON files using `liftlog-program` schema version 1. The s
           "type": "working",
           "muscles": ["chest", "triceps"],
           "section": "Main work",
-          "notes": "Optional exercise note"
+          "notes": "Optional exercise note",
+          "weekOverrides": [
+            { "startWeek": 1, "endWeek": 2, "sets": 3, "reps": "8-10" }
+          ]
         }
       ]
     }
@@ -48,6 +51,7 @@ LiftLog accepts local JSON files using `liftlog-program` schema version 1. The s
 - `sets`: whole number from 1 to 99.
 - `reps`, `rir`, and `rest`: text targets. Numeric reps and RIR are also accepted.
 - `muscles`: one or more of `chest`, `back`, `quads`, `hamstrings`, `glutes`, `calves`, `core`, `biceps`, `triceps`, `shoulders`, `side-delts`, `rear-delts`, `traps`, `forearms`, `grip`, or `prehab`.
+- `weekOverrides`: optional, non-overlapping week ranges that replace `sets`, `reps`, or both. Omit a field to keep its base value.
 
 For a paired set, add the same group to both exercises and use positions `A` and `B`:
 

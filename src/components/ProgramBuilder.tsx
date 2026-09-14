@@ -26,7 +26,7 @@ import {
   validateProgramDraft,
   type ProgramValidationIssue,
 } from '../lib/programBuilder'
-import { getWorkingSetCount } from '../lib/programMetrics'
+import { getExercisePrescription, getWorkingSetCount } from '../lib/programMetrics'
 import type {
   ExerciseTemplate,
   MuscleGroup,
@@ -179,7 +179,7 @@ export function ProgramBuilder({
             <strong>{metrics.exercises}</strong>
           </div>
           <div>
-            <span>Working sets</span>
+            <span>Week {draft.currentWeek} sets</span>
             <strong>{metrics.workingSets}</strong>
           </div>
         </section>
@@ -316,6 +316,7 @@ export function ProgramBuilder({
             {draft.workouts.map((workout, index) => (
               <WorkoutEditor
                 canCopy={draft.workouts.length < 14}
+                durationWeeks={draft.durationWeeks}
                 index={index}
                 issues={issues}
                 key={workout.id}
@@ -329,6 +330,7 @@ export function ProgramBuilder({
                 }
                 open={openWorkoutId === workout.id}
                 openExerciseId={openExerciseId}
+                previewWeek={draft.currentWeek}
                 setOpenExerciseId={setOpenExerciseId}
                 total={draft.workouts.length}
                 workout={workout}
@@ -374,6 +376,7 @@ export function ProgramBuilder({
 
 interface WorkoutEditorProps {
   canCopy: boolean
+  durationWeeks: number
   index: number
   issues: ProgramValidationIssue[]
   onChange: (workout: WorkoutTemplate) => void
@@ -384,6 +387,7 @@ interface WorkoutEditorProps {
   onToggle: () => void
   open: boolean
   openExerciseId: string | null
+  previewWeek: number
   setOpenExerciseId: (id: string | null) => void
   total: number
   workout: WorkoutTemplate
@@ -391,6 +395,7 @@ interface WorkoutEditorProps {
 
 function WorkoutEditor({
   canCopy,
+  durationWeeks,
   index,
   issues,
   onChange,
@@ -401,6 +406,7 @@ function WorkoutEditor({
   onToggle,
   open,
   openExerciseId,
+  previewWeek,
   setOpenExerciseId,
   total,
   workout,
@@ -461,7 +467,7 @@ function WorkoutEditor({
             <strong>{name}</strong>
             <small>
               {workout.scheduledDay} / {workout.exercises.length} exercises /{' '}
-              {getWorkingSetCount(workout)} sets
+              {getWorkingSetCount(workout, previewWeek)} sets
             </small>
           </span>
           {open ? <ChevronUp aria-hidden="true" size={18} /> : <ChevronDown aria-hidden="true" size={18} />}
@@ -566,6 +572,7 @@ function WorkoutEditor({
           <div className="builder-exercise-list">
             {workout.exercises.map((exercise, exerciseIndex) => (
               <ExerciseEditor
+                durationWeeks={durationWeeks}
                 exercise={exercise}
                 index={exerciseIndex}
                 issues={issues}
@@ -580,6 +587,7 @@ function WorkoutEditor({
                 }
                 open={openExerciseId === exercise.id}
                 path={`${workoutPath}.exercises.${exerciseIndex}`}
+                previewWeek={previewWeek}
                 total={workout.exercises.length}
                 workoutNumber={index + 1}
               />
@@ -592,6 +600,7 @@ function WorkoutEditor({
 }
 
 interface ExerciseEditorProps {
+  durationWeeks: number
   exercise: ExerciseTemplate
   index: number
   issues: ProgramValidationIssue[]
@@ -603,11 +612,13 @@ interface ExerciseEditorProps {
   onToggle: () => void
   open: boolean
   path: string
+  previewWeek: number
   total: number
   workoutNumber: number
 }
 
 function ExerciseEditor({
+  durationWeeks,
   exercise,
   index,
   issues,
@@ -619,10 +630,13 @@ function ExerciseEditor({
   onToggle,
   open,
   path,
+  previewWeek,
   total,
   workoutNumber,
 }: ExerciseEditorProps) {
   const name = exercise.name.trim() || `Exercise ${index + 1}`
+  const weekOverrides = exercise.weekOverrides ?? []
+  const previewPrescription = getExercisePrescription(exercise, previewWeek)
 
   function update(patch: Partial<ExerciseTemplate>) {
     onChange({ ...exercise, ...patch })
@@ -637,6 +651,33 @@ function ExerciseEditor({
     })
   }
 
+  function addWeekOverride() {
+    const lastEndWeek = Math.max(0, ...weekOverrides.map((override) => override.endWeek))
+    const startWeek = Math.min(Math.max(1, durationWeeks), lastEndWeek + 1)
+    update({
+      weekOverrides: [
+        ...weekOverrides,
+        { startWeek, endWeek: startWeek, sets: exercise.sets },
+      ],
+    })
+  }
+
+  function updateWeekOverride(
+    overrideIndex: number,
+    patch: Partial<NonNullable<ExerciseTemplate['weekOverrides']>[number]>,
+  ) {
+    update({
+      weekOverrides: weekOverrides.map((override, itemIndex) =>
+        itemIndex === overrideIndex ? { ...override, ...patch } : override,
+      ),
+    })
+  }
+
+  function removeWeekOverride(overrideIndex: number) {
+    const nextOverrides = weekOverrides.filter((_, itemIndex) => itemIndex !== overrideIndex)
+    update({ weekOverrides: nextOverrides.length ? nextOverrides : undefined })
+  }
+
   return (
     <article className="builder-exercise" data-open={open}>
       <div className="builder-exercise-summary">
@@ -649,7 +690,10 @@ function ExerciseEditor({
           <span className="builder-order">{index + 1}</span>
           <span>
             <strong>{name}</strong>
-            <small>{exercise.sets} x {exercise.reps || 'reps'} / {exercise.rest || 'rest'}</small>
+            <small>
+              {previewPrescription.sets} x {previewPrescription.reps || 'reps'} /{' '}
+              {previewPrescription.overridden ? `week ${previewWeek}` : exercise.rest || 'rest'}
+            </small>
           </span>
           {open ? <ChevronUp aria-hidden="true" size={17} /> : <ChevronDown aria-hidden="true" size={17} />}
         </button>
@@ -763,6 +807,131 @@ function ExerciseEditor({
                 value={exercise.section}
               />
             </BuilderField>
+          </div>
+
+          <div className="week-override-section">
+            <div className="week-override-heading">
+              <div>
+                <strong>Week-specific changes</strong>
+                <span>Override the base sets or reps during selected weeks.</span>
+              </div>
+              <button
+                className="text-button"
+                disabled={weekOverrides.length >= 24}
+                onClick={addWeekOverride}
+                type="button"
+              >
+                <Plus aria-hidden="true" size={15} />
+                Add change
+              </button>
+            </div>
+            {findIssue(issues, `${path}.weekOverrides`) ? (
+              <p className="field-error">{findIssue(issues, `${path}.weekOverrides`)}</p>
+            ) : null}
+            {weekOverrides.length > 0 ? (
+              <div className="week-override-list">
+                {weekOverrides.map((override, overrideIndex) => {
+                  const overridePath = `${path}.weekOverrides.${overrideIndex}`
+                  return (
+                    <div className="week-override-row" key={overrideIndex}>
+                      <div className="week-override-row-heading">
+                        <strong>Change {overrideIndex + 1}</strong>
+                        <IconButton
+                          danger
+                          label={`Delete week-specific change ${overrideIndex + 1}`}
+                          onClick={() => removeWeekOverride(overrideIndex)}
+                        >
+                          <Trash2 aria-hidden="true" size={14} />
+                        </IconButton>
+                      </div>
+                      <div className="builder-field-grid override-field-grid">
+                        <BuilderField
+                          error={findIssue(issues, `${overridePath}.startWeek`)}
+                          id={`${exercise.id}-override-${overrideIndex}-start`}
+                          label="Start week"
+                        >
+                          <input
+                            className="text-input"
+                            id={`${exercise.id}-override-${overrideIndex}-start`}
+                            inputMode="numeric"
+                            max={Math.max(1, durationWeeks)}
+                            min="1"
+                            onChange={(event) =>
+                              updateWeekOverride(overrideIndex, {
+                                startWeek: numberValue(event.target.value),
+                              })
+                            }
+                            type="number"
+                            value={override.startWeek}
+                          />
+                        </BuilderField>
+                        <BuilderField
+                          error={findIssue(issues, `${overridePath}.endWeek`)}
+                          id={`${exercise.id}-override-${overrideIndex}-end`}
+                          label="End week"
+                        >
+                          <input
+                            className="text-input"
+                            id={`${exercise.id}-override-${overrideIndex}-end`}
+                            inputMode="numeric"
+                            max={Math.max(1, durationWeeks)}
+                            min="1"
+                            onChange={(event) =>
+                              updateWeekOverride(overrideIndex, {
+                                endWeek: numberValue(event.target.value),
+                              })
+                            }
+                            type="number"
+                            value={override.endWeek}
+                          />
+                        </BuilderField>
+                        <BuilderField
+                          error={findIssue(issues, `${overridePath}.sets`)}
+                          id={`${exercise.id}-override-${overrideIndex}-sets`}
+                          label="Sets"
+                        >
+                          <input
+                            className="text-input"
+                            id={`${exercise.id}-override-${overrideIndex}-sets`}
+                            inputMode="numeric"
+                            max="99"
+                            min="1"
+                            onChange={(event) =>
+                              updateWeekOverride(overrideIndex, {
+                                sets: optionalNumberValue(event.target.value),
+                              })
+                            }
+                            placeholder="Base"
+                            type="number"
+                            value={override.sets ?? ''}
+                          />
+                        </BuilderField>
+                        <BuilderField
+                          error={findIssue(issues, `${overridePath}.reps`)}
+                          id={`${exercise.id}-override-${overrideIndex}-reps`}
+                          label="Rep target"
+                        >
+                          <input
+                            className="text-input"
+                            id={`${exercise.id}-override-${overrideIndex}-reps`}
+                            onChange={(event) =>
+                              updateWeekOverride(overrideIndex, {
+                                reps: event.target.value || undefined,
+                              })
+                            }
+                            placeholder="Base"
+                            value={override.reps ?? ''}
+                          />
+                        </BuilderField>
+                      </div>
+                      {findIssue(issues, overridePath) ? (
+                        <p className="field-error">{findIssue(issues, overridePath)}</p>
+                      ) : null}
+                    </div>
+                  )
+                })}
+              </div>
+            ) : null}
           </div>
 
           <fieldset className="builder-fieldset">
@@ -939,4 +1108,8 @@ function revealIssue(
 
 function numberValue(value: string): number {
   return value === '' ? 0 : Number(value)
+}
+
+function optionalNumberValue(value: string): number | undefined {
+  return value === '' ? undefined : Number(value)
 }

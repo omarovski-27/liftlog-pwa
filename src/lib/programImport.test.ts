@@ -34,6 +34,7 @@ ${JSON.stringify({
           rir: 2,
           type: 'work',
           muscles: ['Pecs', 'Tricep'],
+          weekOverrides: [{ startWeek: 2, endWeek: 3, sets: 3, reps: 10 }],
         },
       ],
     },
@@ -67,6 +68,7 @@ ${JSON.stringify({
       kind: 'working',
       muscleGroups: ['chest', 'triceps'],
       rest: '2 min',
+      weekOverrides: [{ startWeek: 2, endWeek: 3, sets: 3, reps: '10' }],
     })
   })
 
@@ -118,6 +120,9 @@ ${JSON.stringify({
     expect(imported.workouts[0].exercises[3].pair?.group).toBe(
       imported.workouts[0].exercises[4].pair?.group,
     )
+    expect(imported.workouts[0].exercises[2].weekOverrides).toEqual([
+      { startWeek: 1, endWeek: 2, sets: 2, reps: undefined },
+    ])
     expect(imported.workouts[0].id).not.toBe(chestSpecializationProgram.workouts[0].id)
   })
 
@@ -128,5 +133,6 @@ ${JSON.stringify({
     expect(prompt).toContain('liftlog-program')
     expect(prompt).toContain('side-delts')
     expect(prompt).toContain('pair: {"group":"Pair 1","position":"A"}')
+    expect(prompt).toContain('weekOverrides')
   })
 })

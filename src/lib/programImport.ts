@@ -1,5 +1,6 @@
 import type {
   ExerciseKind,
+  ExerciseWeekOverride,
   MuscleGroup,
   PairLabel,
   TrainingProgram,
@@ -42,6 +43,12 @@ export interface LiftLogProgramFile {
       muscles: MuscleGroup[]
       section?: string
       notes?: string
+      weekOverrides?: Array<{
+        startWeek: number
+        endWeek: number
+        sets?: number
+        reps?: string
+      }>
       pair?: {
         group: string
         position: PairLabel
@@ -159,6 +166,12 @@ export function parseProgramImport(raw: string): TrainingProgram {
         issues,
       ) ?? defaultSection(kind)
       exercise.notes = optionalString(exerciseEntry.notes, `${exercisePath} notes`, issues)
+      exercise.weekOverrides = normalizeWeekOverrides(
+        exerciseEntry.weekOverrides,
+        exercisePath,
+        durationWeeks,
+        issues,
+      )
       exercise.pair = normalizePair(exerciseEntry.pair, exercisePath, issues)
       return exercise
     })
@@ -218,6 +231,7 @@ export function createProgramFile(program: TrainingProgram): LiftLogProgramFile 
             muscles: exercise.muscleGroups,
             section: exercise.section || undefined,
             notes: exercise.notes,
+            weekOverrides: exercise.weekOverrides?.map((override) => ({ ...override })),
             pair,
           }
         }),
@@ -256,6 +270,7 @@ export function getAiProgramPrompt(): string {
             type: 'working',
             muscles: ['chest', 'triceps'],
             section: 'Main work',
+            weekOverrides: [{ startWeek: 1, endWeek: 2, sets: 3 }],
           },
         ],
       },
@@ -268,6 +283,7 @@ export function getAiProgramPrompt(): string {
     'Return only valid JSON with no commentary or markdown fences.',
     `Use only these muscle values: ${muscles}.`,
     'Exercise type must be working, warm-up, or prehab.',
+    'For week-specific sets or reps, add weekOverrides with startWeek, endWeek, and the fields that change.',
     'For supersets, add pair: {"group":"Pair 1","position":"A"} to both exercises and use position B on the second exercise.',
     'Follow this exact shape:',
     JSON.stringify(example, null, 2),
@@ -479,6 +495,73 @@ function normalizePair(
     return group ? { group, label: 'A' } : undefined
   }
   return group ? { group, label: position } : undefined
+}
+
+function normalizeWeekOverrides(
+  value: unknown,
+  path: string,
+  durationWeeks: number,
+  issues: string[],
+): ExerciseWeekOverride[] | undefined {
+  if (value === undefined || value === null) return undefined
+  if (!Array.isArray(value)) {
+    issues.push(`${path} weekOverrides must be a list.`)
+    return undefined
+  }
+  if (value.length > 24) {
+    issues.push(`${path} weekOverrides can contain no more than 24 changes.`)
+  }
+
+  const overrides = value.slice(0, 24).map((entry, index) => {
+    const overridePath = `${path}, week change ${index + 1}`
+    if (!isRecord(entry)) {
+      issues.push(`${overridePath} must be an object.`)
+      return { startWeek: 1, endWeek: 1 }
+    }
+
+    const startWeek = integerInRange(
+      entry.startWeek,
+      `${overridePath} startWeek`,
+      1,
+      Math.max(1, durationWeeks),
+      issues,
+    )
+    const endWeek = integerInRange(
+      entry.endWeek,
+      `${overridePath} endWeek`,
+      1,
+      Math.max(1, durationWeeks),
+      issues,
+    )
+    if (endWeek < startWeek) {
+      issues.push(`${overridePath} endWeek must be on or after startWeek.`)
+    }
+    const sets = entry.sets === undefined || entry.sets === null || entry.sets === ''
+      ? undefined
+      : integerInRange(entry.sets, `${overridePath} sets`, 1, 99, issues)
+    const reps = optionalTargetString(entry.reps, `${overridePath} reps`, issues)
+    if (sets === undefined && reps === undefined) {
+      issues.push(`${overridePath} must change sets or reps.`)
+    }
+
+    return { startWeek, endWeek, sets, reps }
+  })
+
+  overrides.forEach((override, index) => {
+    const overlappingIndex = overrides.findIndex(
+      (other, otherIndex) =>
+        otherIndex < index &&
+        override.startWeek <= other.endWeek &&
+        override.endWeek >= other.startWeek,
+    )
+    if (overlappingIndex >= 0) {
+      issues.push(
+        `${path}, week change ${index + 1} overlaps week change ${overlappingIndex + 1}.`,
+      )
+    }
+  })
+
+  return overrides.length ? overrides : undefined
 }
 
 function defaultSection(kind: ExerciseKind): string {

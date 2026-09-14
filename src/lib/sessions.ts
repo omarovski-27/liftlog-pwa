@@ -1,6 +1,6 @@
 import type { TrainingProgram, WorkoutTemplate } from '../types/program'
 import type { ExerciseLog, SetLog, WorkoutSession } from '../types/session'
-import { getProgramCurrentWeek } from './programMetrics'
+import { getExercisePrescription, getProgramCurrentWeek } from './programMetrics'
 
 function makeId(prefix: string): string {
   const id = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`
@@ -31,22 +31,25 @@ export function createWorkoutSession(
     startedAt: now,
     updatedAt: now,
     sessionNotes: '',
-    exercises: workout.exercises.map((exercise) => ({
-      id: makeId('exercise'),
-      templateExerciseId: exercise.id,
-      originalName: exercise.name,
-      performedName: exercise.name,
-      kind: exercise.kind,
-      prescribedSets: exercise.sets,
-      repTarget: exercise.reps,
-      targetRir: exercise.targetRir,
-      rest: exercise.rest,
-      prescriptionNotes: exercise.notes,
-      sessionNotes: '',
-      sets: Array.from({ length: exercise.sets }, (_, index) =>
-        createEmptySet(index + 1),
-      ),
-    })),
+    exercises: workout.exercises.map((exercise) => {
+      const prescription = getExercisePrescription(exercise, weekNumber)
+      return {
+        id: makeId('exercise'),
+        templateExerciseId: exercise.id,
+        originalName: exercise.name,
+        performedName: exercise.name,
+        kind: exercise.kind,
+        prescribedSets: prescription.sets,
+        repTarget: prescription.reps,
+        targetRir: exercise.targetRir,
+        rest: exercise.rest,
+        prescriptionNotes: exercise.notes,
+        sessionNotes: '',
+        sets: Array.from({ length: prescription.sets }, (_, index) =>
+          createEmptySet(index + 1),
+        ),
+      }
+    }),
   }
 }
 

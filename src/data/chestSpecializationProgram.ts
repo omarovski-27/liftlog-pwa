@@ -3,13 +3,14 @@ import type { TrainingProgram } from '../types/program'
 export const chestSpecializationProgram: TrainingProgram = {
   id: 'chest-specialization-omar-2026',
   name: 'Chest Specialization Block',
-  source: 'C:/Users/Omar/Downloads/chest-specialization-program.pdf',
+  source: 'Chest specialization program PDF',
   durationWeeks: 14,
   liftingDaysPerWeek: 4,
   wrestlingDaysPerWeek: '2-3',
   fullRestDay: 'Friday',
   status: 'seed',
   currentWeek: 1,
+  seedRevision: 2,
   phases: [
     {
       id: 'phase-1',
@@ -127,8 +128,9 @@ export const chestSpecializationProgram: TrainingProgram = {
           reps: '8-12',
           targetRir: '1-2',
           rest: '2-3 min',
-          notes: 'Barbell from week 3 only if the shoulder is clear.',
+          notes: 'Weeks 1-2: 2 sets. Barbell from week 3 only if the shoulder is clear.',
           section: 'Chest priority',
+          weekOverrides: [{ startWeek: 1, endWeek: 2, sets: 2 }],
         },
         {
           id: 'd1-chest-supported-row',
@@ -339,7 +341,9 @@ export const chestSpecializationProgram: TrainingProgram = {
           reps: '10-15',
           targetRir: '0-2',
           rest: '60-90 s',
+          notes: 'Weeks 1-2: 2 sets for the entry dose.',
           section: 'Arms',
+          weekOverrides: [{ startWeek: 1, endWeek: 2, sets: 2 }],
           pair: { group: 'd2-pair-3', label: 'A' },
         },
         {
@@ -351,7 +355,9 @@ export const chestSpecializationProgram: TrainingProgram = {
           reps: '10-15',
           targetRir: '0-2',
           rest: '60-90 s',
+          notes: 'Weeks 1-2: 2 sets for the entry dose.',
           section: 'Arms',
+          weekOverrides: [{ startWeek: 1, endWeek: 2, sets: 2 }],
           pair: { group: 'd2-pair-3', label: 'B' },
         },
         {
@@ -430,8 +436,9 @@ export const chestSpecializationProgram: TrainingProgram = {
           sets: 2,
           reps: '12-20',
           rest: '60-90 s',
-          notes: 'Low-to-high. Capped range in weeks 1-2.',
+          notes: 'Low-to-high. Weeks 1-2: 1 set with capped range.',
           section: 'Paired accessories',
+          weekOverrides: [{ startWeek: 1, endWeek: 2, sets: 1 }],
           pair: { group: 'd3-pair-1', label: 'A' },
         },
         {
@@ -480,8 +487,9 @@ export const chestSpecializationProgram: TrainingProgram = {
           reps: '10-15',
           targetRir: '0-2',
           rest: '60-90 s',
-          notes: 'Brachialis and forearm.',
+          notes: 'Brachialis and forearm. Weeks 1-2: 2 sets for the entry dose.',
           section: 'Paired accessories',
+          weekOverrides: [{ startWeek: 1, endWeek: 2, sets: 2 }],
           pair: { group: 'd3-pair-3', label: 'A' },
         },
         {
@@ -493,7 +501,9 @@ export const chestSpecializationProgram: TrainingProgram = {
           reps: '10-15',
           targetRir: '0-2',
           rest: '60-90 s',
+          notes: 'Weeks 1-2: 2 sets for the entry dose.',
           section: 'Paired accessories',
+          weekOverrides: [{ startWeek: 1, endWeek: 2, sets: 2 }],
           pair: { group: 'd3-pair-3', label: 'B' },
         },
         {
@@ -585,8 +595,9 @@ export const chestSpecializationProgram: TrainingProgram = {
           reps: '12-20',
           targetRir: '1-2',
           rest: '90 s',
-          notes: 'Light load, high quality.',
+          notes: 'Light load, high quality. Weeks 1-2: 2 sets.',
           section: 'Chest third exposure',
+          weekOverrides: [{ startWeek: 1, endWeek: 2, sets: 2 }],
         },
         {
           id: 'd4-db-or-preacher-curl',
@@ -597,7 +608,9 @@ export const chestSpecializationProgram: TrainingProgram = {
           reps: '10-15',
           targetRir: '0-2',
           rest: '60-90 s',
+          notes: 'Weeks 1-2: 2 sets for the entry dose.',
           section: 'Arms',
+          weekOverrides: [{ startWeek: 1, endWeek: 2, sets: 2 }],
           pair: { group: 'd4-pair-3', label: 'A' },
         },
         {
@@ -609,7 +622,9 @@ export const chestSpecializationProgram: TrainingProgram = {
           reps: '10-15',
           targetRir: '0-2',
           rest: '60-90 s',
+          notes: 'Weeks 1-2: 2 sets for the entry dose.',
           section: 'Arms',
+          weekOverrides: [{ startWeek: 1, endWeek: 2, sets: 2 }],
           pair: { group: 'd4-pair-3', label: 'B' },
         },
         {

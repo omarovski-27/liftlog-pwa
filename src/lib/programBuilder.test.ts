@@ -54,6 +54,39 @@ describe('program builder', () => {
     ])
   })
 
+  it('validates and normalizes non-overlapping week-specific prescriptions', () => {
+    const draft = createEmptyProgram()
+    draft.name = 'Phased Strength'
+    const exercise = draft.workouts[0].exercises[0]
+    exercise.name = 'Bench press'
+    exercise.muscleGroups = ['chest']
+    exercise.weekOverrides = [
+      { startWeek: 5, endWeek: 6, reps: ' 4-6 ' },
+      { startWeek: 1, endWeek: 2, sets: 2 },
+    ]
+
+    const program = finalizeProgramDraft(draft)
+
+    expect(program.workouts[0].exercises[0].weekOverrides).toEqual([
+      { startWeek: 1, endWeek: 2, sets: 2, reps: undefined },
+      { startWeek: 5, endWeek: 6, reps: '4-6' },
+    ])
+    expect(getProgramDraftMetrics(program).workingSets).toBe(2)
+
+    exercise.weekOverrides = [
+      { startWeek: 1, endWeek: 3, sets: 2 },
+      { startWeek: 3, endWeek: 4, reps: '6-8' },
+    ]
+    expect(validateProgramDraft(draft)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: 'workouts.0.exercises.0.weekOverrides.1.startWeek',
+          message: 'Week range overlaps change 1.',
+        }),
+      ]),
+    )
+  })
+
   it('copies a program without sharing program, workout, exercise, or pair ids', () => {
     const copied = createProgramCopy(chestSpecializationProgram)
     const originalWorkoutIds = new Set(
@@ -71,6 +104,7 @@ describe('program builder', () => {
     expect(copied.id).not.toBe(chestSpecializationProgram.id)
     expect(copied.name).toBe('Chest Specialization Block Copy')
     expect(copied.status).toBe('custom')
+    expect(copied.seedRevision).toBeUndefined()
     expect(copied.workouts.every((workout) => !originalWorkoutIds.has(workout.id))).toBe(true)
     expect(
       copied.workouts.every((workout) =>

@@ -20,8 +20,41 @@ describe('workout sessions', () => {
     expect(session.status).toBe('active')
     expect(session.programVersion).toBe(1)
     expect(session.exercises).toHaveLength(11)
-    expect(getSessionSetProgress(session)).toEqual({ completed: 0, total: 29 })
+    expect(getSessionSetProgress(session)).toEqual({ completed: 0, total: 28 })
     expect(session.exercises[1].sets).toHaveLength(4)
+    expect(session.exercises[2].sets).toHaveLength(2)
+  })
+
+  it('uses the base prescription after a week override ends', () => {
+    const completedSessions = Array.from({ length: 8 }, () => ({
+      ...createWorkoutSession(
+        chestSpecializationProgram,
+        chestSpecializationProgram.workouts[0],
+        [],
+      ),
+      status: 'completed' as const,
+    }))
+    const session = createWorkoutSession(
+      chestSpecializationProgram,
+      chestSpecializationProgram.workouts[0],
+      completedSessions,
+    )
+
+    expect(session.weekNumber).toBe(3)
+    expect(session.exercises[2].sets).toHaveLength(3)
+    expect(getSessionSetProgress(session)).toEqual({ completed: 0, total: 29 })
+  })
+
+  it('applies a week-specific rep target without changing the base set count', () => {
+    const program = structuredClone(chestSpecializationProgram)
+    program.workouts[0].exercises[1].weekOverrides = [
+      { startWeek: 1, endWeek: 1, reps: '10-12' },
+    ]
+
+    const session = createWorkoutSession(program, program.workouts[0], [])
+
+    expect(session.exercises[1].prescribedSets).toBe(4)
+    expect(session.exercises[1].repTarget).toBe('10-12')
   })
 
   it('numbers sessions from the configured starting week', () => {

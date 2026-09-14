@@ -46,7 +46,7 @@ export async function createBackup(): Promise<LiftLogBackup> {
   return {
     format: 'liftlog-backup',
     schemaVersion: 1,
-    appVersion: '0.7.1',
+    appVersion: '0.8.0',
     createdAt: new Date().toISOString(),
     data,
   }
@@ -310,6 +310,9 @@ function assertTrainingProgram(value: unknown, label: string): asserts value is 
   assertString(value.fullRestDay, `${label} rest day`)
   assertOneOf(value.status, ['seed', 'custom'], `${label} status`)
   assertPositiveInteger(value.currentWeek, `${label} current week`)
+  if (value.seedRevision !== undefined) {
+    assertPositiveInteger(value.seedRevision, `${label} seed revision`)
+  }
   if (value.currentWeek > value.durationWeeks) {
     throw new Error(`${label} current week exceeds its duration.`)
   }
@@ -323,12 +326,17 @@ function assertTrainingProgram(value: unknown, label: string): asserts value is 
   assertStringArray(value.stopTriggers, `${label} stop triggers`)
   assertArray(value.workouts, `${label} workouts`)
   if (value.workouts.length === 0) throw new Error(`${label} has no workouts.`)
+  const durationWeeks = value.durationWeeks
   value.workouts.forEach((workout, index) =>
-    assertWorkoutTemplate(workout, `${label} workout ${index + 1}`),
+    assertWorkoutTemplate(workout, `${label} workout ${index + 1}`, durationWeeks),
   )
 }
 
-function assertWorkoutTemplate(value: unknown, label: string): asserts value is WorkoutTemplate {
+function assertWorkoutTemplate(
+  value: unknown,
+  label: string,
+  durationWeeks: number,
+): asserts value is WorkoutTemplate {
   assertRecord(value, label)
   assertString(value.id, `${label} id`)
   assertPositiveInteger(value.dayNumber, `${label} day number`)
@@ -340,11 +348,15 @@ function assertWorkoutTemplate(value: unknown, label: string): asserts value is 
   assertArray(value.exercises, `${label} exercises`)
   if (value.exercises.length === 0) throw new Error(`${label} has no exercises.`)
   value.exercises.forEach((exercise, index) =>
-    assertExerciseTemplate(exercise, `${label} exercise ${index + 1}`),
+    assertExerciseTemplate(exercise, `${label} exercise ${index + 1}`, durationWeeks),
   )
 }
 
-function assertExerciseTemplate(value: unknown, label: string): asserts value is ExerciseTemplate {
+function assertExerciseTemplate(
+  value: unknown,
+  label: string,
+  durationWeeks: number,
+): asserts value is ExerciseTemplate {
   assertRecord(value, label)
   assertString(value.id, `${label} id`)
   assertString(value.name, `${label} name`)
@@ -356,6 +368,42 @@ function assertExerciseTemplate(value: unknown, label: string): asserts value is
   assertString(value.section, `${label} section`)
   if (value.targetRir !== undefined) assertString(value.targetRir, `${label} target RIR`)
   if (value.notes !== undefined) assertString(value.notes, `${label} notes`)
+  if (value.weekOverrides !== undefined) {
+    assertArray(value.weekOverrides, `${label} week overrides`)
+    if (value.weekOverrides.length > 24) {
+      throw new Error(`${label} has too many week overrides.`)
+    }
+    const weekOverrides = value.weekOverrides
+    weekOverrides.forEach((override, index) => {
+      const overrideLabel = `${label} week override ${index + 1}`
+      assertRecord(override, overrideLabel)
+      assertPositiveInteger(override.startWeek, `${overrideLabel} start`)
+      assertPositiveInteger(override.endWeek, `${overrideLabel} end`)
+      const startWeek = override.startWeek
+      const endWeek = override.endWeek
+      if (endWeek < startWeek || endWeek > durationWeeks) {
+        throw new Error(`${overrideLabel} range is invalid.`)
+      }
+      if (override.sets !== undefined) {
+        assertPositiveInteger(override.sets, `${overrideLabel} sets`)
+      }
+      if (override.reps !== undefined) assertString(override.reps, `${overrideLabel} reps`)
+      if (override.sets === undefined && override.reps === undefined) {
+        throw new Error(`${overrideLabel} does not change sets or reps.`)
+      }
+      const overlaps = weekOverrides.some((other, otherIndex) => {
+        if (otherIndex >= index || typeof other !== 'object' || other === null) return false
+        const prior = other as Record<string, unknown>
+        return (
+          typeof prior.startWeek === 'number' &&
+          typeof prior.endWeek === 'number' &&
+          startWeek <= prior.endWeek &&
+          endWeek >= prior.startWeek
+        )
+      })
+      if (overlaps) throw new Error(`${overrideLabel} overlaps an earlier range.`)
+    })
+  }
   if (value.pair !== undefined) {
     assertRecord(value.pair, `${label} pairing`)
     assertString(value.pair.group, `${label} pairing group`)

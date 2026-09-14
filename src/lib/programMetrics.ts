@@ -1,9 +1,37 @@
-import type { MuscleGroup, TrainingProgram, WorkoutTemplate } from '../types/program'
+import type {
+  ExerciseTemplate,
+  MuscleGroup,
+  TrainingProgram,
+  WorkoutTemplate,
+} from '../types/program'
 
-export function getWorkingSetCount(workout: WorkoutTemplate): number {
+export function getExercisePrescription(
+  exercise: ExerciseTemplate,
+  weekNumber?: number,
+): { sets: number; reps: string; overridden: boolean } {
+  const override = weekNumber === undefined
+    ? undefined
+    : exercise.weekOverrides?.find(
+        (entry) => weekNumber >= entry.startWeek && weekNumber <= entry.endWeek,
+      )
+
+  return {
+    sets: override?.sets ?? exercise.sets,
+    reps: override?.reps ?? exercise.reps,
+    overridden: override !== undefined,
+  }
+}
+
+export function getWorkingSetCount(
+  workout: WorkoutTemplate,
+  weekNumber?: number,
+): number {
   return workout.exercises
     .filter((exercise) => exercise.kind === 'working')
-    .reduce((total, exercise) => total + exercise.sets, 0)
+    .reduce(
+      (total, exercise) => total + getExercisePrescription(exercise, weekNumber).sets,
+      0,
+    )
 }
 
 export function getWorkoutExerciseCount(workout: WorkoutTemplate): number {
@@ -45,9 +73,12 @@ export function getWeeklyExerciseSlots(program: TrainingProgram): number {
   )
 }
 
-export function getWeeklyWorkingSets(program: TrainingProgram): number {
+export function getWeeklyWorkingSets(
+  program: TrainingProgram,
+  weekNumber?: number,
+): number {
   return program.workouts.reduce(
-    (total, workout) => total + getWorkingSetCount(workout),
+    (total, workout) => total + getWorkingSetCount(workout, weekNumber),
     0,
   )
 }
@@ -55,6 +86,7 @@ export function getWeeklyWorkingSets(program: TrainingProgram): number {
 export function getWeeklySetsForMuscle(
   program: TrainingProgram,
   muscleGroup: MuscleGroup,
+  weekNumber?: number,
 ): number {
   return program.workouts.reduce((total, workout) => {
     const workoutSets = workout.exercises
@@ -62,7 +94,10 @@ export function getWeeklySetsForMuscle(
         (exercise) =>
           exercise.kind === 'working' && exercise.muscleGroups.includes(muscleGroup),
       )
-      .reduce((sum, exercise) => sum + exercise.sets, 0)
+      .reduce(
+        (sum, exercise) => sum + getExercisePrescription(exercise, weekNumber).sets,
+        0,
+      )
 
     return total + workoutSets
   }, 0)

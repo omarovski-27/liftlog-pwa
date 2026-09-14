@@ -29,6 +29,7 @@ Mobile-first progressive overload tracker for Omar's lifting programs. The app i
 - Treat builder saves as immutable program versions; copies receive new program, workout, exercise, phase, and paired-set identities.
 - Keep the public `liftlog-program` JSON contract free of internal ids and route imports through validation and builder review.
 - Derive analytics only from completed sets in completed sessions; skipped exercises must not appear as prior performance.
+- Resolve non-overlapping exercise week overrides before displaying set totals or creating a workout session.
 - Lock program creation, editing, switching, version restores, and backup imports while a workout is active.
 - Keep exported backups versioned and validate every record before writing imported data.
 - Keep the logging screen dense, plain, and usable at 320px without horizontal scrolling.

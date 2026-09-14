@@ -33,6 +33,18 @@ describe('chest specialization seed program', () => {
     expect(getWeeklyExerciseSlots(chestSpecializationProgram)).toBe(44)
   })
 
+  it('applies the PDF entry-dose prescription in weeks 1 and 2', () => {
+    expect(getWeeklySetsForMuscle(chestSpecializationProgram, 'chest', 1)).toBe(15)
+    expect(getWeeklySetsForMuscle(chestSpecializationProgram, 'biceps', 1)).toBe(8)
+    expect(getWeeklySetsForMuscle(chestSpecializationProgram, 'triceps', 1)).toBe(8)
+    expect(getWeeklyWorkingSets(chestSpecializationProgram, 1)).toBe(101)
+    expect(
+      chestSpecializationProgram.workouts.map((workout) =>
+        getWorkingSetCount(workout, 1),
+      ),
+    ).toEqual([24, 26, 23, 28])
+  })
+
   it('preserves each lifting day and its working-set count', () => {
     expect(
       chestSpecializationProgram.workouts.map((workout) => [

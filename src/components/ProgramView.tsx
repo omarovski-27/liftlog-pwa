@@ -5,6 +5,7 @@ import type { PwaInstallController } from '../hooks/usePwaInstall'
 import { getProgramSessionCount } from '../lib/sessions'
 import {
   getRemainingProgramSessions,
+  getProgramCurrentWeek,
   getWorkoutExerciseCount,
   getWorkingSetCount,
 } from '../lib/programMetrics'
@@ -50,6 +51,7 @@ export function ProgramView({
   const completed = getProgramSessionCount(program.id, sessions)
   const remaining = getRemainingProgramSessions(program, completed)
   const weeksLeft = Math.ceil(remaining / program.liftingDaysPerWeek)
+  const currentWeek = getProgramCurrentWeek(program, completed)
 
   return (
     <div className="page-view">
@@ -98,7 +100,7 @@ export function ProgramView({
         versions={versions}
       />
 
-      <ProgramSection title="Workouts">
+      <ProgramSection title={`Workouts - week ${currentWeek}`}>
         <div className="program-workout-list">
           {program.workouts.map((workout) => (
             <div key={workout.id}>
@@ -108,7 +110,7 @@ export function ProgramView({
                 <small>{workout.scheduledDay}</small>
               </div>
               <p>
-                {getWorkoutExerciseCount(workout)} exercises / {getWorkingSetCount(workout)} sets
+                {getWorkoutExerciseCount(workout)} exercises / {getWorkingSetCount(workout, currentWeek)} sets
               </p>
             </div>
           ))}

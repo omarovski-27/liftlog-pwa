@@ -114,6 +114,16 @@ describe('program versions and backups', () => {
     )
   })
 
+  it('rejects a week-specific prescription outside the program duration', async () => {
+    await ensureProgramVersion(chestSpecializationProgram)
+    const backup = await createBackup()
+    backup.data.programVersions[0].program.workouts[0].exercises[2].weekOverrides = [
+      { startWeek: 1, endWeek: 15, sets: 2 },
+    ]
+
+    expect(() => parseBackup(serializeBackup(backup))).toThrow(/range is invalid/)
+  })
+
   it('replaces local records with an exact backup snapshot', async () => {
     await ensureProgramVersion(chestSpecializationProgram)
     const cleanBackup = await createBackup()

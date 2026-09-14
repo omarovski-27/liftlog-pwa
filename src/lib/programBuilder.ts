@@ -99,6 +99,7 @@ export function createProgramCopy(program: TrainingProgram): TrainingProgram {
     name: `${program.name} Copy`,
     source: `Duplicated from ${program.name}`,
     status: 'custom',
+    seedRevision: undefined,
     currentWeek: 1,
     startedAt: new Date().toISOString(),
     phases: copied.phases.map((phase) => ({ ...phase, id: makeId('phase') })),
@@ -169,7 +170,7 @@ export function getProgramDraftMetrics(program: TrainingProgram): ProgramDraftMe
   return {
     workouts: program.workouts.length,
     exercises: getWeeklyExerciseSlots(program),
-    workingSets: getWeeklyWorkingSets(program),
+    workingSets: getWeeklyWorkingSets(program, program.currentWeek),
   }
 }
 
@@ -245,6 +246,75 @@ export function validateProgramDraft(program: TrainingProgram): ProgramValidatio
           message: 'Enter a paired-set group.',
         })
       }
+      if ((exercise.weekOverrides?.length ?? 0) > 24) {
+        issues.push({
+          path: `${exercisePath}.weekOverrides`,
+          message: 'Use no more than 24 week-specific changes per exercise.',
+        })
+      }
+      exercise.weekOverrides?.forEach((override, overrideIndex) => {
+        const overridePath = `${exercisePath}.weekOverrides.${overrideIndex}`
+        if (
+          !Number.isInteger(override.startWeek) ||
+          override.startWeek < 1 ||
+          override.startWeek > Math.max(1, program.durationWeeks)
+        ) {
+          issues.push({
+            path: `${overridePath}.startWeek`,
+            message: 'Start week must fall within the program.',
+          })
+        }
+        if (
+          !Number.isInteger(override.endWeek) ||
+          override.endWeek < 1 ||
+          override.endWeek > Math.max(1, program.durationWeeks)
+        ) {
+          issues.push({
+            path: `${overridePath}.endWeek`,
+            message: 'End week must fall within the program.',
+          })
+        }
+        if (override.startWeek > override.endWeek) {
+          issues.push({
+            path: `${overridePath}.endWeek`,
+            message: 'End week must be on or after the start week.',
+          })
+        }
+        if (
+          override.sets !== undefined &&
+          (!Number.isInteger(override.sets) || override.sets < 1 || override.sets > 99)
+        ) {
+          issues.push({
+            path: `${overridePath}.sets`,
+            message: 'Override sets must be a whole number from 1 to 99.',
+          })
+        }
+        if (override.reps !== undefined && !override.reps.trim()) {
+          issues.push({
+            path: `${overridePath}.reps`,
+            message: 'Override reps cannot be blank.',
+          })
+        }
+        if (override.sets === undefined && override.reps === undefined) {
+          issues.push({
+            path: overridePath,
+            message: 'Override either sets or reps.',
+          })
+        }
+
+        const overlappingIndex = exercise.weekOverrides?.findIndex(
+          (other, otherIndex) =>
+            otherIndex < overrideIndex &&
+            override.startWeek <= other.endWeek &&
+            override.endWeek >= other.startWeek,
+        ) ?? -1
+        if (overlappingIndex >= 0) {
+          issues.push({
+            path: `${overridePath}.startWeek`,
+            message: `Week range overlaps change ${overlappingIndex + 1}.`,
+          })
+        }
+      })
     })
   })
 
@@ -273,6 +343,14 @@ export function finalizeProgramDraft(program: TrainingProgram): TrainingProgram 
         rest: exercise.rest.trim(),
         notes: cleanOptional(exercise.notes),
         section: exercise.section.trim() || 'Main work',
+        weekOverrides: exercise.weekOverrides?.length
+          ? exercise.weekOverrides
+              .map((override) => ({
+                ...override,
+                reps: cleanOptional(override.reps),
+              }))
+              .sort((a, b) => a.startWeek - b.startWeek)
+          : undefined,
         pair: exercise.pair
           ? { group: exercise.pair.group.trim(), label: exercise.pair.label }
           : undefined,
@@ -284,6 +362,7 @@ export function finalizeProgramDraft(program: TrainingProgram): TrainingProgram 
     ...clone(program),
     name: program.name.trim(),
     status: 'custom',
+    seedRevision: undefined,
     liftingDaysPerWeek: workouts.length,
     workouts,
     weeklyLayout: buildWeeklyLayout(workouts, program.fullRestDay),

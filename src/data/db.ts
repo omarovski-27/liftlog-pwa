@@ -128,6 +128,26 @@ export async function ensureProgramVersion(program: TrainingProgram): Promise<Pr
 
     const latest = getLatestProgramVersion(uniqueVersions)
     if (latest) {
+      const incomingRevision = program.seedRevision ?? 1
+      const storedRevision = latest.program.seedRevision ?? 1
+      if (
+        latest.reason === 'seed' &&
+        latest.program.status === 'seed' &&
+        incomingRevision > storedRevision
+      ) {
+        const updatedSeed: ProgramVersion = {
+          id: makeVersionId(),
+          programId: program.id,
+          version: Math.max(...uniqueVersions.map((version) => version.version)) + 1,
+          createdAt: new Date().toISOString(),
+          reason: 'seed',
+          basedOnVersion: latest.version,
+          label: `Source program revision ${incomingRevision}`,
+          program,
+        }
+        await liftLogDb.programVersions.add(updatedSeed)
+        return updatedSeed
+      }
       return latest
     }
 

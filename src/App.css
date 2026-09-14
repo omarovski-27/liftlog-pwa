@@ -326,6 +326,10 @@ button:disabled,
   white-space: nowrap;
 }
 
+.workout-outline li[data-adjusted='true'] strong {
+  color: var(--signal);
+}
+
 .page-header {
   border-bottom: 1px solid var(--line);
 }
@@ -1239,6 +1243,51 @@ button:disabled,
 
 .exercise-field-grid {
   margin-top: 12px;
+}
+
+.week-override-section {
+  border-bottom: 1px solid var(--line);
+  border-top: 1px solid var(--line);
+  margin-top: 20px;
+  padding: 16px 0;
+}
+
+.week-override-heading,
+.week-override-row-heading {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.week-override-heading > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.week-override-heading strong,
+.week-override-row-heading strong {
+  font-size: 13px;
+}
+
+.week-override-heading span {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.week-override-list {
+  margin-top: 12px;
+}
+
+.week-override-row {
+  border-top: 1px solid var(--line);
+  padding: 10px 0 4px;
+}
+
+.override-field-grid {
+  margin-top: 8px;
 }
 
 .builder-fieldset {
