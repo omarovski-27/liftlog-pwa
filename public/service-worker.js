@@ -1,4 +1,4 @@
-const CACHE_NAME = 'liftlog-shell-v7'
+const CACHE_NAME = 'liftlog-shell-v8'
 const APP_SHELL = [
   './',
   './index.html',
@@ -10,20 +10,19 @@ const APP_SHELL = [
 ]
 
 async function getBuildAssets() {
-  const response = await fetch('./index.html', { cache: 'reload' })
+  const scopeUrl = new URL(self.registration.scope)
+  const response = await fetch(new URL('./index.html', scopeUrl), { cache: 'reload' })
   const html = await response.clone().text()
-  const urls = new Set(APP_SHELL)
+  const urls = new Set(APP_SHELL.map((path) => new URL(path, scopeUrl).href))
   const matches = html.matchAll(/(?:href|src)="([^"]+)"/g)
 
   for (const match of matches) {
-    const assetUrl = match[1]
-
+    const assetUrl = new URL(match[1], scopeUrl)
     if (
-      assetUrl.startsWith('./') ||
-      assetUrl.startsWith('assets/') ||
-      assetUrl.startsWith('/assets/')
+      assetUrl.origin === scopeUrl.origin &&
+      assetUrl.pathname.startsWith(scopeUrl.pathname)
     ) {
-      urls.add(assetUrl.replace(/^\//, './'))
+      urls.add(assetUrl.href)
     }
   }
 
@@ -68,8 +67,10 @@ self.addEventListener('fetch', (event) => {
       }
 
       return fetch(request).then((response) => {
-        const copy = response.clone()
-        caches.open(CACHE_NAME).then((cache) => cache.put(request, copy))
+        if (response.ok) {
+          const copy = response.clone()
+          caches.open(CACHE_NAME).then((cache) => cache.put(request, copy))
+        }
         return response
       })
     }),

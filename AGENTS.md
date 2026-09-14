@@ -34,6 +34,7 @@ Mobile-first progressive overload tracker for Omar's lifting programs. The app i
 - Keep the logging screen dense, plain, and usable at 320px without horizontal scrolling.
 - Prefer local-first behavior and free deployment paths.
 - Build GitHub Pages with `VITE_BASE_PATH=/liftlog-pwa/`; keep local development rooted at `/`.
+- The service-worker install test must prove hashed assets are cached under the GitHub Pages subpath.
 - Verify changes with lint, tests, and a production build before calling work complete.
 
 ## Import Contract

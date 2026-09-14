@@ -46,7 +46,7 @@ export async function createBackup(): Promise<LiftLogBackup> {
   return {
     format: 'liftlog-backup',
     schemaVersion: 1,
-    appVersion: '0.7.0',
+    appVersion: '0.7.1',
     createdAt: new Date().toISOString(),
     data,
   }
