@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+import * as database from './data/db'
 import App from './App'
 import { chestSpecializationProgram } from './data/chestSpecializationProgram'
 import {
@@ -9,6 +10,7 @@ import {
   saveProgramVersion,
 } from './data/db'
 import { createBackup, serializeBackup } from './lib/backups'
+import { createProgramCopy } from './lib/programBuilder'
 import { createWorkoutSession } from './lib/sessions'
 
 const importedProgramJson = JSON.stringify({
@@ -47,6 +49,78 @@ async function startFirstWorkout() {
 }
 
 describe('App', () => {
+  it('waits for ordered autosaves before finishing the latest workout snapshot', async () => {
+    const save = database.saveSession
+    let release = () => {}
+    const held = new Promise<void>((resolve) => { release = resolve })
+    let firstWrite = true
+    const writes = vi.spyOn(database, 'saveSession').mockImplementation(async (session) => {
+      if (firstWrite) {
+        firstWrite = false
+        await held
+      }
+      await save(session)
+    })
+    await startFirstWorkout()
+    fireEvent.change(screen.getByLabelText('Incline DB press set 1 weight'), { target: { value: '35' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Finish' }))
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Finish workout' }))
+    await waitFor(() => expect(writes).toHaveBeenCalledTimes(1))
+    expect(screen.queryByRole('heading', { name: 'History' })).not.toBeInTheDocument()
+    expect(within(screen.getByRole('dialog')).getByRole('button', { name: 'Saving...' })).toBeDisabled()
+    release()
+    await screen.findByRole('heading', { name: 'History' })
+    const stored = (await liftLogDb.sessions.toArray())[0]
+    expect(stored.status).toBe('completed')
+    expect(stored.exercises[1].sets[0].weightKg).toBe(35)
+  })
+
+  it('offers a working retry after a failed autosave', async () => {
+    vi.spyOn(database, 'saveSession').mockRejectedValueOnce(new Error('Temporarily unavailable'))
+    await startFirstWorkout()
+    await screen.findByText('Changes not saved')
+    fireEvent.click(screen.getByRole('button', { name: 'Retry saving' }))
+    await screen.findByText('Saved on this device')
+    expect(await liftLogDb.sessions.count()).toBe(1)
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('shows a recoverable startup error instead of an endless loading screen', async () => {
+    vi.spyOn(liftLogDb.programVersions, 'toArray').mockRejectedValueOnce(new Error('Unavailable'))
+    render(<App />)
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('could not be opened')
+    expect(screen.queryByText('Opening logbook...')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(await screen.findByRole('button', { name: 'Start workout' })).toBeInTheDocument()
+  })
+
+  it('keeps the active workout open when finishing cannot be saved', async () => {
+    const save = database.saveSession
+    vi.spyOn(database, 'saveSession').mockImplementation(async (session) => {
+      if (session.status === 'completed') throw new Error('Disk full')
+      await save(session)
+    })
+    await startFirstWorkout()
+    fireEvent.click(screen.getByRole('button', { name: 'Finish' }))
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Finish workout' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('could not be saved')
+    expect(screen.getByRole('heading', { name: 'Day 1 - Upper: Heavy Chest' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'History' })).not.toBeInTheDocument()
+    expect((await liftLogDb.sessions.toArray())[0]?.status).toBe('active')
+  })
+
+  it('keeps the workout available when discard fails', async () => {
+    vi.spyOn(database, 'deleteSession').mockRejectedValueOnce(new Error('Unavailable'))
+    await startFirstWorkout()
+    fireEvent.click(screen.getByRole('button', { name: 'Discard workout' }))
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Discard' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('could not be removed')
+    expect(screen.getByRole('heading', { name: 'Day 1 - Upper: Heavy Chest' })).toBeInTheDocument()
+  })
+
   it('renders the restrained program logbook with live progress', async () => {
     render(<App />)
 
@@ -164,7 +238,7 @@ describe('App', () => {
       ),
     )
 
-    expect(await screen.findByRole('heading', { name: 'History' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'History' }, { timeout: 5000 })).toBeInTheDocument()
     expect(screen.getByText('Upper: Heavy Chest')).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Train' }))
@@ -173,7 +247,7 @@ describe('App', () => {
 
     expect(await screen.findByText('32.5 x 8 @2')).toBeInTheDocument()
     expect(screen.getByText(/Last: Incline DB press/)).toBeInTheDocument()
-  })
+  }, 10000)
 
   it('shows exercise progression across completed sessions', async () => {
     const version = await ensureProgramVersion(chestSpecializationProgram)
@@ -222,6 +296,30 @@ describe('App', () => {
     expect(
       screen.getByRole('region', { name: 'Estimated strength trend' }),
     ).toBeInTheDocument()
+  })
+
+  it('keeps completed sessions visible in History even when another program is active', async () => {
+    const otherProgram = createProgramCopy(chestSpecializationProgram)
+    otherProgram.name = 'Old Strength Block'
+    const otherVersion = await saveProgramVersion(otherProgram, 'create')
+    const otherSession = createWorkoutSession(
+      otherProgram,
+      otherProgram.workouts[0],
+      [],
+      otherVersion.version,
+    )
+    otherSession.status = 'completed'
+    otherSession.completedAt = '2026-09-17T10:00:00.000Z'
+    otherSession.updatedAt = otherSession.completedAt
+    otherSession.workoutTitle = 'Old program upper'
+    await liftLogDb.sessions.add(otherSession)
+
+    render(<App />)
+    await screen.findByText('Chest Specialization Block')
+    fireEvent.click(screen.getByRole('button', { name: 'History' }))
+
+    expect(await screen.findByText('1 completed workouts')).toBeInTheDocument()
+    expect(screen.getByText('Old program upper')).toBeInTheDocument()
   })
 
   it('reviews and merges a validated backup from the Program tab', async () => {

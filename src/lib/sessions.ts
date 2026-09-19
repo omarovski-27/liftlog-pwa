@@ -1,6 +1,7 @@
 import type { TrainingProgram, WorkoutTemplate } from '../types/program'
 import type { ExerciseLog, SetLog, WorkoutSession } from '../types/session'
 import { getExercisePrescription, getProgramCurrentWeek } from './programMetrics'
+import { getExerciseMetric, getSetQuantity, SET_METRICS } from './setMetrics'
 
 function makeId(prefix: string): string {
   const id = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`
@@ -39,6 +40,8 @@ export function createWorkoutSession(
         originalName: exercise.name,
         performedName: exercise.name,
         kind: exercise.kind,
+        metric: getExerciseMetric(exercise),
+        pair: exercise.pair ? { ...exercise.pair } : undefined,
         prescribedSets: prescription.sets,
         repTarget: prescription.reps,
         targetRir: exercise.targetRir,
@@ -59,6 +62,8 @@ export function createEmptySet(number: number): SetLog {
     number,
     weightKg: null,
     reps: null,
+    durationSeconds: null,
+    distanceMeters: null,
     rir: null,
     completed: false,
   }
@@ -91,7 +96,7 @@ export function getLatestExercisePerformance(
   currentExercise: ExerciseLog,
 ): { session: WorkoutSession; exercise: ExerciseLog } | undefined {
   const completedSessions = getCompletedSessions(sessions).filter(
-    (session) => session.programId === currentSession.programId,
+    (session) => session.programId === currentSession.programId && session.id !== currentSession.id,
   )
   const currentName = normalizeExerciseName(currentExercise.performedName)
 
@@ -99,8 +104,8 @@ export function getLatestExercisePerformance(
     const exercise = session.exercises.find(
       (entry) =>
         entry.sets.some((set) => set.completed) &&
-        (normalizeExerciseName(entry.performedName) === currentName ||
-          normalizeExerciseName(entry.originalName) === currentName),
+        normalizeExerciseName(entry.performedName) === currentName &&
+        getExerciseMetric(entry) === getExerciseMetric(currentExercise),
     )
     if (exercise) {
       return { session, exercise }
@@ -162,15 +167,16 @@ export function getSessionSetProgress(session: WorkoutSession): {
 
 export function getSessionVolume(session: WorkoutSession): number {
   return session.exercises.reduce(
-    (sessionTotal, exercise) =>
-      sessionTotal +
-      exercise.sets.reduce((exerciseTotal, set) => {
+    (sessionTotal, exercise) => {
+      if (getExerciseMetric(exercise) !== 'reps') return sessionTotal
+      return sessionTotal + exercise.sets.reduce((exerciseTotal, set) => {
         if (!set.completed || set.weightKg === null || set.reps === null) {
           return exerciseTotal
         }
 
         return exerciseTotal + set.weightKg * set.reps
-      }, 0),
+      }, 0)
+    },
     0,
   )
 }
@@ -179,19 +185,24 @@ export function copyPreviousSets(
   exercise: ExerciseLog,
   previousExercise: ExerciseLog,
 ): ExerciseLog {
+  const metric = getExerciseMetric(exercise)
+  if (normalizeExerciseName(exercise.performedName) !== normalizeExerciseName(previousExercise.performedName) || metric !== getExerciseMetric(previousExercise)) {
+    return exercise
+  }
   return {
     ...exercise,
     sets: exercise.sets.map((set, index) => {
       const previousSet = previousExercise.sets[index]
-      if (!previousSet) {
+      if (!previousSet?.completed || set.completed) {
         return set
       }
 
       return {
         ...set,
-        weightKg: previousSet.weightKg,
-        reps: previousSet.reps,
-        rir: previousSet.rir,
+        weightKg: set.weightKg ?? previousSet.weightKg,
+        reps: metric === 'reps' ? set.reps ?? previousSet.reps : null,
+        [SET_METRICS[metric].field]: getSetQuantity(set, metric) ?? getSetQuantity(previousSet, metric),
+        rir: set.rir ?? previousSet.rir,
       }
     }),
   }

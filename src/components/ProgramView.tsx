@@ -19,6 +19,7 @@ interface ProgramViewProps {
   currentVersion: ProgramVersion
   install: PwaInstallController
   canManagePrograms: boolean
+  canExportBackup: boolean
   programs: ProgramVersion[]
   versions: ProgramVersion[]
   onCreateProgram: () => void
@@ -37,6 +38,7 @@ export function ProgramView({
   currentVersion,
   install,
   canManagePrograms,
+  canExportBackup,
   programs,
   versions,
   onCreateProgram,
@@ -94,6 +96,7 @@ export function ProgramView({
 
       <BackupPanel
         canModifyData={canManagePrograms}
+        canExportData={canExportBackup}
         currentVersion={currentVersion}
         onRestoreBackup={onRestoreBackup}
         onRestoreVersion={onRestoreVersion}

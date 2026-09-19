@@ -26,6 +26,7 @@ LiftLog accepts local JSON files using `liftlog-program` schema version 1. The s
           "name": "Bench press",
           "sets": 4,
           "reps": "6-10",
+          "metric": "reps",
           "rir": "2",
           "rest": "3 min",
           "type": "working",
@@ -50,10 +51,12 @@ LiftLog accepts local JSON files using `liftlog-program` schema version 1. The s
 - `type`: `working`, `warm-up`, or `prehab`. It defaults to `working`.
 - `sets`: whole number from 1 to 99.
 - `reps`, `rir`, and `rest`: text targets. Numeric reps and RIR are also accepted.
+- `metric`: `reps`, `seconds`, or `meters`. For carries or holds use, for example, `reps: "30-45 sec"` and `metric: "seconds"`; for distances use `metric: "meters"`. Without an explicit metric, seconds and meters are inferred from the target. Logged duration and distance remain separate from reps and are excluded from rep-volume and estimated strength calculations.
 - `muscles`: one or more of `chest`, `back`, `quads`, `hamstrings`, `glutes`, `calves`, `core`, `biceps`, `triceps`, `shoulders`, `side-delts`, `rear-delts`, `traps`, `forearms`, `grip`, or `prehab`.
 - `weekOverrides`: optional, non-overlapping week ranges that replace `sets`, `reps`, or both. Omit a field to keep its base value.
 
 For a paired set, add the same group to both exercises and use positions `A` and `B`:
+Each group must contain exactly one `A` exercise and one `B` exercise within its workout.
 
 ```json
 "pair": { "group": "Pair 1", "position": "A" }

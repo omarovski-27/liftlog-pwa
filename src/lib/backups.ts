@@ -7,6 +7,8 @@ import type {
   ProgramVersion,
   ProgramVersionReason,
 } from '../types/storage'
+import { MUSCLE_GROUPS, validateProgramDraft } from './programBuilder'
+import { getExerciseMetric } from './setMetrics'
 
 export const MAX_BACKUP_BYTES = 25 * 1024 * 1024
 
@@ -46,7 +48,7 @@ export async function createBackup(): Promise<LiftLogBackup> {
   return {
     format: 'liftlog-backup',
     schemaVersion: 1,
-    appVersion: '0.8.0',
+    appVersion: '0.9.0',
     createdAt: new Date().toISOString(),
     data,
   }
@@ -57,6 +59,7 @@ export function serializeBackup(backup: LiftLogBackup): string {
 }
 
 export function parseBackup(raw: string): LiftLogBackup {
+  if (new TextEncoder().encode(raw).byteLength > MAX_BACKUP_BYTES) throw new Error('The backup is larger than 25 MB.')
   let value: unknown
   try {
     value = JSON.parse(raw)
@@ -93,6 +96,9 @@ export function parseBackup(raw: string): LiftLogBackup {
   assertUniqueIds(programVersions, 'program version')
   assertUniqueIds(sessions, 'session')
   assertUniqueIds(alternatives, 'alternative')
+  if (sessions.filter((session) => session.status === 'active').length > 1) {
+    throw new Error('The backup contains more than one active workout.')
+  }
 
   const versionKeys = new Set(
     programVersions.map((version) => `${version.programId}:${version.version}`),
@@ -100,10 +106,27 @@ export function parseBackup(raw: string): LiftLogBackup {
   if (versionKeys.size !== programVersions.length) {
     throw new Error('The backup contains duplicate program version numbers.')
   }
+  for (const version of programVersions) {
+    if (version.basedOnVersion !== undefined && (!versionKeys.has(`${version.programId}:${version.basedOnVersion}`) || version.basedOnVersion >= version.version)) {
+      throw new Error(`Program version ${version.id} refers to an invalid based-on version.`)
+    }
+  }
 
   for (const session of sessions) {
     if (!versionKeys.has(`${session.programId}:${session.programVersion}`)) {
       throw new Error(`Session ${session.id} refers to a missing program version.`)
+    }
+    const version = programVersions.find((entry) => entry.programId === session.programId && entry.version === session.programVersion)!
+    const workout = version.program.workouts.find((entry) => entry.id === session.workoutTemplateId)
+    if (!workout) throw new Error(`Session ${session.id} refers to a missing workout.`)
+    if (session.weekNumber > version.program.durationWeeks) throw new Error(`Session ${session.id} week exceeds its program duration.`)
+    for (const exercise of session.exercises) {
+      const template = workout.exercises.find((entry) => entry.id === exercise.templateExerciseId)
+      if (!template) {
+        throw new Error(`Session ${session.id} refers to a missing template exercise.`)
+      }
+      exercise.metric ??= getExerciseMetric({ ...template, ...exercise })
+      if (!exercise.pair && template.pair) exercise.pair = { ...template.pair }
     }
   }
 
@@ -117,6 +140,9 @@ export function parseBackup(raw: string): LiftLogBackup {
   for (const alternative of alternatives) {
     if (!programIds.has(alternative.programId)) {
       throw new Error(`Alternative ${alternative.id} refers to a missing program.`)
+    }
+    if (!programVersions.some((version) => version.programId === alternative.programId && version.program.workouts.some((workout) => workout.exercises.some((exercise) => exercise.id === alternative.templateExerciseId)))) {
+      throw new Error(`Alternative ${alternative.id} refers to a missing template exercise.`)
     }
   }
 
@@ -140,9 +166,14 @@ export async function restoreBackup(
   backup: LiftLogBackup,
   mode: BackupRestoreMode,
 ): Promise<BackupRestoreResult> {
+  backup = parseBackup(serializeBackup(backup))
+  if (mode !== 'merge' && mode !== 'replace') throw new Error('Choose merge or replace for the backup restore.')
   const summary = summarizeBackup(backup)
-  const latestIncomingVersion = backup.data.programVersions.slice().sort(compareVersions)[0]
-  const preferredProgramId = backup.data.activeProgramId ?? latestIncomingVersion.programId
+  const latestIncomingVersion = backup.data.programVersions
+    .slice()
+    .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0]
+  const preferredProgramId = backup.data.sessions.find((session) => session.status === 'active')?.programId
+    ?? backup.data.activeProgramId ?? latestIncomingVersion.programId
 
   await liftLogDb.transaction(
     'rw',
@@ -153,6 +184,9 @@ export async function restoreBackup(
       liftLogDb.settings,
     ],
     async () => {
+      if (await liftLogDb.sessions.where('status').equals('active').count() > 0) {
+        throw new Error('Finish or discard the active workout before restoring a backup.')
+      }
       if (mode === 'replace') {
         await Promise.all([
           liftLogDb.programVersions.clear(),
@@ -180,28 +214,50 @@ export async function restoreBackup(
         existingVersions,
         backup.data.programVersions,
       )
-      const existingSessionIds = new Set(existingSessions.map((session) => session.id))
-      const existingAlternativeIds = new Set(
-        existingAlternatives.map((alternative) => alternative.id),
-      )
-      const sessionsToAdd = backup.data.sessions
-        .filter((session) => !existingSessionIds.has(session.id))
+      const existingBySessionId = new Map(existingSessions.map((session) => [session.id, session]))
+      const existingByAlternativeId = new Map(existingAlternatives.map((alternative) => [alternative.id, alternative]))
+      const sessionsToSave = backup.data.sessions
         .map((session) => ({
           ...session,
           programVersion:
             versionNumberMap.get(`${session.programId}:${session.programVersion}`) ??
             session.programVersion,
         }))
-      const alternativesToAdd = backup.data.alternatives.filter(
-        (alternative) => !existingAlternativeIds.has(alternative.id),
-      )
+        .filter((session) => {
+          const local = existingBySessionId.get(session.id)
+          if (!local) return true
+          if (
+            local.programId !== session.programId ||
+            local.programVersion !== session.programVersion ||
+            local.workoutTemplateId !== session.workoutTemplateId
+          ) {
+            throw new Error('A backup session id conflicts with a different local workout.')
+          }
+          if (local.status === 'completed' && session.status === 'active') return false
+          return (local.status === 'active' && session.status === 'completed') || Date.parse(session.updatedAt) > Date.parse(local.updatedAt)
+        })
+      const mergedSessions = new Map(existingBySessionId)
+      sessionsToSave.forEach((session) => mergedSessions.set(session.id, session))
+      if ([...mergedSessions.values()].filter((session) => session.status === 'active').length > 1) {
+        throw new Error('Finish the active workout before merging another active workout.')
+      }
+      const alternativesToSave = backup.data.alternatives.flatMap((alternative) => {
+        const local = existingByAlternativeId.get(alternative.id)
+        if (!local) return [alternative]
+        if (local.programId !== alternative.programId || local.templateExerciseId !== alternative.templateExerciseId) {
+          throw new Error('A backup alternative id conflicts with a different local exercise.')
+        }
+        return Date.parse(alternative.lastUsedAt) > Date.parse(local.lastUsedAt)
+          ? [{ ...alternative, timesUsed: Math.max(local.timesUsed, alternative.timesUsed) }]
+          : []
+      })
 
       if (versionsToAdd.length > 0) {
         await liftLogDb.programVersions.bulkAdd(versionsToAdd)
       }
-      if (sessionsToAdd.length > 0) await liftLogDb.sessions.bulkAdd(sessionsToAdd)
-      if (alternativesToAdd.length > 0) {
-        await liftLogDb.alternatives.bulkAdd(alternativesToAdd)
+      if (sessionsToSave.length > 0) await liftLogDb.sessions.bulkPut(sessionsToSave)
+      if (alternativesToSave.length > 0) {
+        await liftLogDb.alternatives.bulkPut(alternativesToSave)
       }
       await liftLogDb.settings.put({
         id: 'app',
@@ -245,6 +301,9 @@ function mergeProgramVersions(
     const key = `${version.programId}:${version.version}`
     const sameRecord = existingById.get(version.id)
     if (sameRecord) {
+      if (sameRecord.programId !== version.programId || JSON.stringify(canonicalValue(sameRecord.program)) !== JSON.stringify(canonicalValue(version.program))) {
+        throw new Error('A backup program version id conflicts with a different local prescription.')
+      }
       versionNumberMap.set(key, sameRecord.version)
       continue
     }
@@ -269,13 +328,19 @@ function mergeProgramVersions(
             ...version,
             version: nextVersion,
             reason: 'import' as const,
-            basedOnVersion: version.version,
             label: version.label ? `${version.label} (imported)` : 'Imported version',
           },
     )
   }
 
-  return { versionsToAdd, versionNumberMap }
+  return {
+    versionsToAdd: versionsToAdd.map((version) => ({
+      ...version,
+      basedOnVersion: version.basedOnVersion === undefined ? undefined
+        : versionNumberMap.get(`${version.programId}:${version.basedOnVersion}`) ?? version.basedOnVersion,
+    })),
+    versionNumberMap,
+  }
 }
 
 function assertProgramVersion(value: unknown, label: string): asserts value is ProgramVersion {
@@ -305,6 +370,7 @@ function assertTrainingProgram(value: unknown, label: string): asserts value is 
   assertString(value.name, `${label} name`)
   assertString(value.source, `${label} source`)
   assertPositiveInteger(value.durationWeeks, `${label} duration`)
+  if (value.durationWeeks > 104) throw new Error(`${label} duration exceeds 104 weeks.`)
   assertPositiveInteger(value.liftingDaysPerWeek, `${label} lifting days`)
   assertString(value.wrestlingDaysPerWeek, `${label} wrestling days`)
   assertString(value.fullRestDay, `${label} rest day`)
@@ -317,7 +383,21 @@ function assertTrainingProgram(value: unknown, label: string): asserts value is 
     throw new Error(`${label} current week exceeds its duration.`)
   }
   assertArray(value.phases, `${label} phases`)
+  value.phases.forEach((phase, index) => {
+    const phaseLabel = `${label} phase ${index + 1}`
+    assertRecord(phase, phaseLabel)
+    assertString(phase.id, `${phaseLabel} id`)
+    for (const field of ['name', 'weeks', 'nutrition', 'chestSets', 'focus']) assertString(phase[field], `${phaseLabel} ${field}`, true)
+  })
+  assertUniqueIds(value.phases as Array<{ id: string }>, 'phase')
   assertArray(value.chestVolumeRamp, `${label} volume ramp`)
+  value.chestVolumeRamp.forEach((ramp, index) => {
+    const rampLabel = `${label} volume ramp ${index + 1}`
+    assertRecord(ramp, rampLabel)
+    for (const field of ['weeks', 'label', 'note']) assertString(ramp[field], `${rampLabel} ${field}`, true)
+    if (!Number.isInteger(ramp.setsPerWeek) || (ramp.setsPerWeek as number) < 0) throw new Error(`${rampLabel} sets are invalid.`)
+  })
+  if (value.startedAt !== undefined) assertDate(value.startedAt, `${label} start date`)
   assertStringArray(value.weeklyLayout, `${label} weekly layout`)
   assertRecord(value.restIntervals, `${label} rest intervals`)
   assertStringArray(Object.values(value.restIntervals), `${label} rest interval values`)
@@ -326,10 +406,17 @@ function assertTrainingProgram(value: unknown, label: string): asserts value is 
   assertStringArray(value.stopTriggers, `${label} stop triggers`)
   assertArray(value.workouts, `${label} workouts`)
   if (value.workouts.length === 0) throw new Error(`${label} has no workouts.`)
+  if (value.workouts.length > 14 || value.workouts.length !== value.liftingDaysPerWeek) throw new Error(`${label} lifting days do not match its workouts.`)
   const durationWeeks = value.durationWeeks
   value.workouts.forEach((workout, index) =>
     assertWorkoutTemplate(workout, `${label} workout ${index + 1}`, durationWeeks),
   )
+  const workouts = value.workouts as WorkoutTemplate[]
+  assertUniqueIds(workouts, 'workout')
+  assertUniqueIds(workouts.flatMap((workout) => workout.exercises), 'template exercise')
+  if (workouts.some((workout, index) => workout.dayNumber !== index + 1)) throw new Error(`${label} workout day numbers are not in order.`)
+  const issues = validateProgramDraft(value as unknown as TrainingProgram)
+  if (issues.length > 0) throw new Error(`${label}: ${issues[0].message}`)
 }
 
 function assertWorkoutTemplate(
@@ -343,8 +430,8 @@ function assertWorkoutTemplate(
   assertString(value.title, `${label} title`)
   assertString(value.shortTitle, `${label} short title`)
   assertString(value.scheduledDay, `${label} scheduled day`)
-  assertString(value.emphasis, `${label} emphasis`)
-  assertString(value.sourceSummary, `${label} summary`)
+  assertString(value.emphasis, `${label} emphasis`, true)
+  assertString(value.sourceSummary, `${label} summary`, true)
   assertArray(value.exercises, `${label} exercises`)
   if (value.exercises.length === 0) throw new Error(`${label} has no exercises.`)
   value.exercises.forEach((exercise, index) =>
@@ -361,8 +448,13 @@ function assertExerciseTemplate(
   assertString(value.id, `${label} id`)
   assertString(value.name, `${label} name`)
   assertOneOf(value.kind, ['warm-up', 'working', 'prehab'], `${label} kind`)
+  if (value.metric !== undefined) assertOneOf(value.metric, ['reps', 'seconds', 'meters'], `${label} metric`)
   assertStringArray(value.muscleGroups, `${label} muscle groups`)
+  if (value.muscleGroups.length === 0 || value.muscleGroups.some((muscle) => !MUSCLE_GROUPS.some((entry) => entry.value === muscle))) {
+    throw new Error(`${label} muscle groups are invalid.`)
+  }
   assertPositiveInteger(value.sets, `${label} sets`)
+  if (value.sets > 99) throw new Error(`${label} sets exceed 99.`)
   assertString(value.reps, `${label} reps`)
   assertString(value.rest, `${label} rest`)
   assertString(value.section, `${label} section`)
@@ -386,6 +478,7 @@ function assertExerciseTemplate(
       }
       if (override.sets !== undefined) {
         assertPositiveInteger(override.sets, `${overrideLabel} sets`)
+        if (override.sets > 99) throw new Error(`${overrideLabel} sets exceed 99.`)
       }
       if (override.reps !== undefined) assertString(override.reps, `${overrideLabel} reps`)
       if (override.sets === undefined && override.reps === undefined) {
@@ -424,11 +517,14 @@ function assertSession(value: unknown, label: string): asserts value is WorkoutS
   assertDate(value.startedAt, `${label} start date`)
   assertDate(value.updatedAt, `${label} update date`)
   if (value.completedAt !== undefined) assertDate(value.completedAt, `${label} completion date`)
+  if (value.status === 'completed' && value.completedAt === undefined) throw new Error(`${label} has no completion date.`)
   assertString(value.sessionNotes, `${label} notes`, true)
   assertArray(value.exercises, `${label} exercises`)
   value.exercises.forEach((exercise, index) =>
     assertExerciseLog(exercise, `${label} exercise ${index + 1}`),
   )
+  assertUniqueIds(value.exercises as ExerciseLog[], 'logged exercise')
+  assertUniqueIds((value.exercises as ExerciseLog[]).flatMap((exercise) => exercise.sets), 'set')
 }
 
 function assertExerciseLog(value: unknown, label: string): asserts value is ExerciseLog {
@@ -438,7 +534,14 @@ function assertExerciseLog(value: unknown, label: string): asserts value is Exer
   assertString(value.originalName, `${label} original name`)
   assertString(value.performedName, `${label} performed name`)
   assertOneOf(value.kind, ['warm-up', 'working', 'prehab'], `${label} kind`)
+  if (value.metric !== undefined) assertOneOf(value.metric, ['reps', 'seconds', 'meters'], `${label} metric`)
+  if (value.pair !== undefined) {
+    assertRecord(value.pair, `${label} pairing`)
+    assertString(value.pair.group, `${label} pairing group`)
+    assertOneOf(value.pair.label, ['A', 'B'], `${label} pairing label`)
+  }
   assertPositiveInteger(value.prescribedSets, `${label} prescribed sets`)
+  if (value.prescribedSets > 99) throw new Error(`${label} prescribed sets exceed 99.`)
   assertString(value.repTarget, `${label} rep target`)
   assertString(value.rest, `${label} rest`)
   if (value.targetRir !== undefined) assertString(value.targetRir, `${label} target RIR`)
@@ -447,16 +550,20 @@ function assertExerciseLog(value: unknown, label: string): asserts value is Exer
   }
   assertString(value.sessionNotes, `${label} session notes`, true)
   assertArray(value.sets, `${label} sets`)
-  value.sets.forEach((set, index) => assertSetLog(set, `${label} set ${index + 1}`))
+  value.sets.forEach((set, index) => assertSetLog(set, `${label} set ${index + 1}`, getExerciseMetric(value as unknown as ExerciseLog)))
+  if ((value.sets as SetLog[]).some((set, index) => set.number !== index + 1)) throw new Error(`${label} set numbers are not in order.`)
 }
 
-function assertSetLog(value: unknown, label: string): asserts value is SetLog {
+function assertSetLog(value: unknown, label: string, metric: string): asserts value is SetLog {
   assertRecord(value, label)
   assertString(value.id, `${label} id`)
   assertPositiveInteger(value.number, `${label} number`)
-  assertOptionalNumber(value.weightKg, `${label} weight`)
-  assertOptionalNumber(value.reps, `${label} reps`)
-  assertOptionalNumber(value.rir, `${label} RIR`)
+  assertOptionalNumber(value.weightKg, `${label} weight`, 999)
+  assertOptionalNumber(value.reps, `${label} reps`, metric === 'reps' ? 999 : metric === 'seconds' ? 86400 : 100000)
+  if (metric === 'reps' && value.reps !== null && !Number.isInteger(value.reps)) throw new Error(`${label} reps must be a whole number.`)
+  if (value.durationSeconds !== undefined) assertOptionalNumber(value.durationSeconds, `${label} seconds`, 86400)
+  if (value.distanceMeters !== undefined) assertOptionalNumber(value.distanceMeters, `${label} distance`, 100000)
+  assertOptionalNumber(value.rir, `${label} RIR`, 10)
   if (typeof value.completed !== 'boolean') throw new Error(`${label} completion is invalid.`)
 }
 
@@ -495,13 +602,21 @@ function assertStringArray(value: unknown, label: string): asserts value is stri
 }
 
 function assertPositiveInteger(value: unknown, label: string): asserts value is number {
-  if (!Number.isInteger(value) || (value as number) < 1) {
+  if (!Number.isSafeInteger(value) || (value as number) < 1) {
     throw new Error(`${label} is missing or invalid.`)
   }
 }
 
-function assertOptionalNumber(value: unknown, label: string): asserts value is number | null {
-  if (value !== null && (typeof value !== 'number' || !Number.isFinite(value) || value < 0)) {
+function canonicalValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalValue)
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined).sort(([a], [b]) => a.localeCompare(b)).map(([key, entry]) => [key, canonicalValue(entry)]))
+  }
+  return value
+}
+
+function assertOptionalNumber(value: unknown, label: string, maximum = Infinity): asserts value is number | null {
+  if (value !== null && (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > maximum)) {
     throw new Error(`${label} is invalid.`)
   }
 }
@@ -528,9 +643,4 @@ function assertOneOf<T extends string>(
 function assertUniqueIds(items: Array<{ id: string }>, label: string) {
   const ids = new Set(items.map((item) => item.id))
   if (ids.size !== items.length) throw new Error(`The backup contains duplicate ${label} ids.`)
-}
-
-function compareVersions(a: ProgramVersion, b: ProgramVersion): number {
-  if (a.version !== b.version) return b.version - a.version
-  return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
 }

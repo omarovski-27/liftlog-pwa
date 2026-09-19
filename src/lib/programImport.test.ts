@@ -124,6 +124,17 @@ ${JSON.stringify({
       { startWeek: 1, endWeek: 2, sets: 2, reps: undefined },
     ])
     expect(imported.workouts[0].id).not.toBe(chestSpecializationProgram.workouts[0].id)
+    expect(imported.workouts[3].exercises.find((exercise) => exercise.name === "Farmer's carry")?.metric).toBe('seconds')
+  })
+
+  it('round trips explicit distance targets and rejects an unknown measure', () => {
+    const file = createProgramFile(chestSpecializationProgram)
+    file.workouts[3].exercises[0].metric = 'meters'
+    file.workouts[3].exercises[0].reps = '40-50'
+    expect(parseProgramImport(JSON.stringify(file)).workouts[3].exercises[0].metric).toBe('meters')
+    const invalid = JSON.parse(JSON.stringify(file))
+    invalid.workouts[3].exercises[0].metric = 'minutes'
+    expect(() => parseProgramImport(JSON.stringify(invalid))).toThrow(/metric must be reps, seconds, or meters/)
   })
 
   it('provides a self-contained prompt for external AI tools', () => {

@@ -45,7 +45,10 @@ export interface ExerciseWeekOverride {
   reps?: string
 }
 
+export type ExerciseMetric = 'reps' | 'seconds' | 'meters'
+
 export interface ExerciseTemplate {
+  metric?: ExerciseMetric
   id: string
   name: string
   kind: ExerciseKind

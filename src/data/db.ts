@@ -6,6 +6,8 @@ import type {
   ProgramVersion,
   ProgramVersionReason,
 } from '../types/storage'
+import { getExerciseMetric } from '../lib/setMetrics'
+import { ProgramDraftError, validateProgramDraft } from '../lib/programBuilder'
 
 export class LiftLogDatabase extends Dexie {
   sessions!: Table<WorkoutSession, string>
@@ -56,6 +58,18 @@ export class LiftLogDatabase extends Dexie {
       programVersions: 'id, programId, [programId+version], version, createdAt',
       settings: 'id, activeProgramId, updatedAt',
     })
+    this.version(5).stores({}).upgrade(async (transaction) => {
+      const versions = await transaction.table<ProgramVersion, string>('programVersions').toArray()
+      await transaction.table<WorkoutSession, string>('sessions').toCollection().modify((session) => {
+        const version = versions.find((entry) => entry.programId === session.programId && entry.version === session.programVersion)
+        const workout = version?.program.workouts.find((entry) => entry.id === session.workoutTemplateId)
+        session.exercises.forEach((exercise) => {
+          const template = workout?.exercises.find((entry) => entry.id === exercise.templateExerciseId)
+          exercise.metric ??= getExerciseMetric({ ...template, ...exercise })
+          if (!exercise.pair && template?.pair) exercise.pair = { ...template.pair }
+        })
+      })
+    })
   }
 }
 
@@ -75,12 +89,31 @@ export async function loadProgramRecords(programId: string): Promise<{
   return { sessions, alternatives, programVersions }
 }
 
-export async function saveSession(session: WorkoutSession): Promise<void> {
-  await liftLogDb.sessions.put(session)
+export class SessionConflictError extends Error {
+  constructor(message = 'This workout changed in another window. Reload the saved workout before continuing.') {
+    super(message)
+    this.name = 'SessionConflictError'
+  }
 }
 
-export async function deleteSession(sessionId: string): Promise<void> {
-  await liftLogDb.sessions.delete(sessionId)
+export async function saveSession(session: WorkoutSession, expectedUpdatedAt?: string): Promise<void> {
+  await liftLogDb.transaction('rw', liftLogDb.sessions, async () => {
+    const existing = await liftLogDb.sessions.get(session.id)
+    if (expectedUpdatedAt !== undefined && existing?.updatedAt !== expectedUpdatedAt) throw new SessionConflictError()
+    if (existing?.status === 'completed' && session.status === 'active') throw new SessionConflictError()
+    if (!existing && session.status === 'active' && await liftLogDb.sessions.where('status').equals('active').count() > 0) {
+      throw new SessionConflictError('Another workout is already active in another window. Reload the saved workout.')
+    }
+    await liftLogDb.sessions.put(session)
+  })
+}
+
+export async function deleteSession(sessionId: string, expectedUpdatedAt?: string): Promise<void> {
+  await liftLogDb.transaction('rw', liftLogDb.sessions, async () => {
+    const existing = await liftLogDb.sessions.get(sessionId)
+    if (existing?.status === 'completed' || (expectedUpdatedAt !== undefined && existing?.updatedAt !== expectedUpdatedAt)) throw new SessionConflictError()
+    await liftLogDb.sessions.delete(sessionId)
+  })
 }
 
 export async function saveAlternative(alternative: ExerciseAlternative): Promise<void> {
@@ -92,10 +125,10 @@ export async function getActiveProgramId(): Promise<string | undefined> {
 }
 
 export async function setActiveProgramId(programId: string): Promise<void> {
-  await liftLogDb.settings.put({
-    id: 'app',
-    activeProgramId: programId,
-    updatedAt: new Date().toISOString(),
+  await liftLogDb.transaction('rw', [liftLogDb.sessions, liftLogDb.settings], async () => {
+    const active = await liftLogDb.sessions.where('status').equals('active').first()
+    if (active && active.programId !== programId) throw new Error('Finish the active workout before switching programs.')
+    await liftLogDb.settings.put({ id: 'app', activeProgramId: programId, updatedAt: new Date().toISOString() })
   })
 }
 
@@ -170,7 +203,10 @@ export async function saveProgramVersion(
   reason: ProgramVersionReason,
   options: { basedOnVersion?: number; label?: string } = {},
 ): Promise<ProgramVersion> {
-  return liftLogDb.transaction('rw', liftLogDb.programVersions, async () => {
+  const issues = validateProgramDraft(program)
+  if (issues.length > 0) throw new ProgramDraftError(issues)
+  return liftLogDb.transaction('rw', [liftLogDb.programVersions, liftLogDb.sessions], async () => {
+    if (await liftLogDb.sessions.where('status').equals('active').count() > 0) throw new Error('Program changes are locked during an active workout.')
     const versions = await liftLogDb.programVersions
       .where('programId')
       .equals(program.id)

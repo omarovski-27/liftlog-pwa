@@ -7,6 +7,7 @@ import {
   parseProgramImport,
 } from '../lib/programImport'
 import type { TrainingProgram } from '../types/program'
+import { ModalFrame } from './ModalFrame'
 
 interface ProgramImportProps {
   onCancel: () => void
@@ -83,6 +84,7 @@ export function ProgramImport({ onCancel, onReview }: ProgramImportProps) {
         <button
           aria-label="Back"
           className="plain-icon-button"
+          disabled={reading}
           onClick={requestCancel}
           title="Back"
           type="button"
@@ -137,6 +139,7 @@ export function ProgramImport({ onCancel, onReview }: ProgramImportProps) {
               autoCapitalize="off"
               autoCorrect="off"
               className="text-input import-json-input"
+              disabled={reading}
               id="program-json"
               onChange={(event) => {
                 setRaw(event.target.value)
@@ -199,13 +202,7 @@ export function ProgramImport({ onCancel, onReview }: ProgramImportProps) {
       </form>
 
       {discardOpen ? (
-        <div className="modal-backdrop centered" role="presentation">
-          <section
-            aria-labelledby="discard-import-heading"
-            aria-modal="true"
-            className="confirm-dialog"
-            role="dialog"
-          >
+        <ModalFrame labelledBy="discard-import-heading" onClose={() => setDiscardOpen(false)}>
             <h2 id="discard-import-heading">Discard imported JSON?</h2>
             <p>The unsaved import text will be removed.</p>
             <div className="dialog-actions">
@@ -220,8 +217,7 @@ export function ProgramImport({ onCancel, onReview }: ProgramImportProps) {
                 Discard import
               </button>
             </div>
-          </section>
-        </div>
+        </ModalFrame>
       ) : null}
     </main>
   )

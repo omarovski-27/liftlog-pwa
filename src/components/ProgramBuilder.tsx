@@ -27,6 +27,9 @@ import {
   type ProgramValidationIssue,
 } from '../lib/programBuilder'
 import { getExercisePrescription, getWorkingSetCount } from '../lib/programMetrics'
+import { getExerciseMetric, SET_METRICS } from '../lib/setMetrics'
+import { ModalFrame } from './ModalFrame'
+import type { ExerciseMetric } from '../types/program'
 import type {
   ExerciseTemplate,
   MuscleGroup,
@@ -346,13 +349,7 @@ export function ProgramBuilder({
       </form>
 
       {discardOpen ? (
-        <div className="modal-backdrop centered" role="presentation">
-          <section
-            aria-labelledby="discard-program-heading"
-            aria-modal="true"
-            className="confirm-dialog"
-            role="dialog"
-          >
+        <ModalFrame labelledBy="discard-program-heading" onClose={() => setDiscardOpen(false)}>
             <h2 id="discard-program-heading">Discard program changes?</h2>
             <p>The unsaved builder changes will be removed.</p>
             <div className="dialog-actions">
@@ -367,8 +364,7 @@ export function ProgramBuilder({
                 Discard changes
               </button>
             </div>
-          </section>
-        </div>
+        </ModalFrame>
       ) : null}
     </main>
   )
@@ -413,6 +409,7 @@ function WorkoutEditor({
 }: WorkoutEditorProps) {
   const workoutPath = `workouts.${index}`
   const name = workout.shortTitle.trim() || `Workout ${index + 1}`
+  const pairGroups = [...new Set(workout.exercises.flatMap((exercise) => exercise.pair ? [exercise.pair.group] : []))]
 
   function update(patch: Partial<WorkoutTemplate>) {
     onChange({ ...workout, ...patch })
@@ -425,9 +422,12 @@ function WorkoutEditor({
   }
 
   function updateExercise(exerciseId: string, next: ExerciseTemplate) {
+    const priorGroup = workout.exercises.find((exercise) => exercise.id === exerciseId)?.pair?.group
     update({
       exercises: workout.exercises.map((exercise) =>
-        exercise.id === exerciseId ? next : exercise,
+        exercise.id === exerciseId ? next
+          : priorGroup !== undefined && next.pair && priorGroup !== next.pair.group && exercise.pair?.group === priorGroup
+            ? { ...exercise, pair: { ...exercise.pair, group: next.pair.group } } : exercise,
       ),
     })
   }
@@ -587,6 +587,7 @@ function WorkoutEditor({
                 }
                 open={openExerciseId === exercise.id}
                 path={`${workoutPath}.exercises.${exerciseIndex}`}
+                pairGroupLabel={exercise.pair && /^(?:pair-|d\d+-pair-)/.test(exercise.pair.group) ? `Pair ${pairGroups.indexOf(exercise.pair.group) + 1}` : exercise.pair?.group}
                 previewWeek={previewWeek}
                 total={workout.exercises.length}
                 workoutNumber={index + 1}
@@ -612,6 +613,7 @@ interface ExerciseEditorProps {
   onToggle: () => void
   open: boolean
   path: string
+  pairGroupLabel?: string
   previewWeek: number
   total: number
   workoutNumber: number
@@ -630,6 +632,7 @@ function ExerciseEditor({
   onToggle,
   open,
   path,
+  pairGroupLabel,
   previewWeek,
   total,
   workoutNumber,
@@ -637,6 +640,8 @@ function ExerciseEditor({
   const name = exercise.name.trim() || `Exercise ${index + 1}`
   const weekOverrides = exercise.weekOverrides ?? []
   const previewPrescription = getExercisePrescription(exercise, previewWeek)
+  const availableWeek = Array.from({ length: Math.max(0, Math.min(104, durationWeeks)) }, (_, offset) => offset + 1)
+    .find((week) => !weekOverrides.some((override) => week >= override.startWeek && week <= override.endWeek))
 
   function update(patch: Partial<ExerciseTemplate>) {
     onChange({ ...exercise, ...patch })
@@ -652,8 +657,8 @@ function ExerciseEditor({
   }
 
   function addWeekOverride() {
-    const lastEndWeek = Math.max(0, ...weekOverrides.map((override) => override.endWeek))
-    const startWeek = Math.min(Math.max(1, durationWeeks), lastEndWeek + 1)
+    if (availableWeek === undefined) return
+    const startWeek = availableWeek
     update({
       weekOverrides: [
         ...weekOverrides,
@@ -764,7 +769,7 @@ function ExerciseEditor({
             <BuilderField
               error={findIssue(issues, `${path}.reps`)}
               id={`${exercise.id}-reps`}
-              label="Rep target"
+              label={getExerciseMetric(exercise) === 'reps' ? 'Rep target' : 'Target'}
             >
               <input
                 aria-invalid={Boolean(findIssue(issues, `${path}.reps`))}
@@ -774,6 +779,11 @@ function ExerciseEditor({
                 placeholder="8-12"
                 value={exercise.reps}
               />
+            </BuilderField>
+            <BuilderField id={`${exercise.id}-metric`} label="Measure">
+              <select className="text-input" id={`${exercise.id}-metric`} value={getExerciseMetric(exercise)} onChange={(event) => update({ metric: event.target.value as ExerciseMetric })}>
+                {Object.entries(SET_METRICS).map(([value, definition]) => <option key={value} value={value}>{definition.label}</option>)}
+              </select>
             </BuilderField>
             <BuilderField id={`${exercise.id}-rir`} label="Target RIR">
               <input
@@ -817,7 +827,7 @@ function ExerciseEditor({
               </div>
               <button
                 className="text-button"
-                disabled={weekOverrides.length >= 24}
+                disabled={weekOverrides.length >= 24 || availableWeek === undefined}
                 onClick={addWeekOverride}
                 type="button"
               >
@@ -997,7 +1007,7 @@ function ExerciseEditor({
                   onChange={(event) =>
                     update({ pair: { ...exercise.pair!, group: event.target.value } })
                   }
-                  value={exercise.pair.group}
+                  value={pairGroupLabel ?? exercise.pair.group}
                 />
               </BuilderField>
               <BuilderField id={`${exercise.id}-pair-label`} label="Position">

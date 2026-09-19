@@ -6,6 +6,7 @@ import type {
   WorkoutTemplate,
 } from '../types/program'
 import { getWeeklyExerciseSlots, getWeeklyWorkingSets } from './programMetrics'
+import { getExerciseMetric } from './setMetrics'
 
 export const WEEKDAYS = [
   'Monday',
@@ -152,6 +153,7 @@ export function duplicateExercise(exercise: ExerciseTemplate): ExerciseTemplate 
     ...clone(exercise),
     id: makeId('exercise'),
     name: exercise.name ? `${exercise.name} Copy` : '',
+    pair: undefined,
   }
 }
 
@@ -230,6 +232,9 @@ export function validateProgramDraft(program: TrainingProgram): ProgramValidatio
       }
       if (!exercise.reps.trim()) {
         issues.push({ path: `${exercisePath}.reps`, message: 'Enter a rep target.' })
+      }
+      if (exercise.metric !== undefined && !['reps', 'seconds', 'meters'].includes(exercise.metric)) {
+        issues.push({ path: `${exercisePath}.metric`, message: 'Choose reps, seconds, or distance.' })
       }
       if (!exercise.rest.trim()) {
         issues.push({ path: `${exercisePath}.rest`, message: 'Enter a rest interval.' })
@@ -316,6 +321,17 @@ export function validateProgramDraft(program: TrainingProgram): ProgramValidatio
         }
       })
     })
+    const pairGroups = new Map<string, Array<{ index: number; label: string }>>()
+    workout.exercises.forEach((exercise, index) => {
+      if (!exercise.pair) return
+      const group = exercise.pair.group.trim()
+      pairGroups.set(group, [...(pairGroups.get(group) ?? []), { index, label: exercise.pair.label }])
+    })
+    pairGroups.forEach((entries) => {
+      if (entries.length !== 2 || !entries.some((entry) => entry.label === 'A') || !entries.some((entry) => entry.label === 'B')) {
+        issues.push({ path: `${workoutPath}.exercises.${entries[0].index}.pair.group`, message: 'A paired set needs one A and one B exercise.' })
+      }
+    })
   })
 
   return issues
@@ -339,6 +355,7 @@ export function finalizeProgramDraft(program: TrainingProgram): TrainingProgram 
         ...exercise,
         name: exercise.name.trim(),
         reps: exercise.reps.trim(),
+        metric: getExerciseMetric(exercise),
         targetRir: cleanOptional(exercise.targetRir),
         rest: exercise.rest.trim(),
         notes: cleanOptional(exercise.notes),

@@ -1,4 +1,4 @@
-import { ChevronDown, Play } from 'lucide-react'
+import { ChevronDown, Play, RotateCcw } from 'lucide-react'
 import type { TrainingProgram, WorkoutTemplate } from '../types/program'
 import type { WorkoutSession } from '../types/session'
 import {
@@ -21,6 +21,7 @@ interface TrainViewProps {
   onSelectWorkout: (workoutId: string) => void
   onStartWorkout: (workout: WorkoutTemplate) => void
   onResumeWorkout: (session: WorkoutSession) => void
+  onRepeatProgram?: () => void
 }
 
 export function TrainView({
@@ -31,11 +32,13 @@ export function TrainView({
   onSelectWorkout,
   onStartWorkout,
   onResumeWorkout,
+  onRepeatProgram,
 }: TrainViewProps) {
   const activeSession = getActiveSession(sessions)
   const completedCount = getProgramSessionCount(program.id, sessions)
   const sessionTarget = getRemainingProgramSessions(program)
   const remainingSessions = getRemainingProgramSessions(program, completedCount)
+  const programComplete = remainingSessions === 0 && !activeSession
   const currentWeek = getProgramCurrentWeek(program, completedCount)
   const progressPercent = sessionTarget === 0
     ? 100
@@ -65,7 +68,7 @@ export function TrainView({
           <div className="progress-number">
             <span>Completed</span>
             <strong>
-              {completedCount} / {sessionTarget}
+              {Math.min(completedCount, sessionTarget)} / {sessionTarget}
             </strong>
           </div>
         </div>
@@ -77,7 +80,13 @@ export function TrainView({
         </p>
       </section>
 
-      <section className="next-workout" aria-labelledby="next-workout-heading">
+      {programComplete ? (
+        <section className="next-workout" aria-labelledby="complete-heading">
+          <span className="section-label">{program.durationWeeks} weeks</span>
+          <h1 id="complete-heading">Program complete</h1>
+          {onRepeatProgram ? <button className="primary-button" onClick={onRepeatProgram} type="button"><RotateCcw aria-hidden="true" size={17} />Repeat program</button> : null}
+        </section>
+      ) : <section className="next-workout" aria-labelledby="next-workout-heading">
         <span className="section-label">{activeSession ? 'In progress' : 'Next workout'}</span>
         <h1 id="next-workout-heading">{actionWorkout.shortTitle}</h1>
         <p>
@@ -93,7 +102,7 @@ export function TrainView({
           <Play aria-hidden="true" fill="currentColor" size={17} />
           {activeSession ? 'Resume workout' : 'Start workout'}
         </button>
-      </section>
+      </section>}
 
       <section className="week-section" aria-labelledby="week-heading">
         <div className="section-title-row">
@@ -133,6 +142,7 @@ export function TrainView({
                 {selected ? (
                   <WorkoutOutline
                     activeSession={activeSession}
+                    complete={programComplete}
                     weekNumber={currentWeek}
                     workout={workout}
                     onResumeWorkout={onResumeWorkout}
@@ -151,6 +161,7 @@ export function TrainView({
 interface WorkoutOutlineProps {
   workout: WorkoutTemplate
   activeSession: WorkoutSession | undefined
+  complete: boolean
   weekNumber: number
   onStartWorkout: (workout: WorkoutTemplate) => void
   onResumeWorkout: (session: WorkoutSession) => void
@@ -159,6 +170,7 @@ interface WorkoutOutlineProps {
 function WorkoutOutline({
   workout,
   activeSession,
+  complete,
   weekNumber,
   onStartWorkout,
   onResumeWorkout,
@@ -179,7 +191,7 @@ function WorkoutOutline({
           )
         })}
       </ol>
-      <button
+      {complete ? null : <button
         className="secondary-button full-width"
         onClick={() =>
           activeSession ? onResumeWorkout(activeSession) : onStartWorkout(workout)
@@ -187,7 +199,7 @@ function WorkoutOutline({
         type="button"
       >
         {activeSession ? 'Resume current workout' : `Start ${workout.shortTitle}`}
-      </button>
+      </button>}
     </div>
   )
 }

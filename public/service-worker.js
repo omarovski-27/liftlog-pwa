@@ -1,4 +1,4 @@
-const CACHE_NAME = 'liftlog-shell-v9'
+const CACHE_NAME = 'liftlog-shell-v10'
 const APP_SHELL = [
   './',
   './index.html',
@@ -12,6 +12,7 @@ const APP_SHELL = [
 async function getBuildAssets() {
   const scopeUrl = new URL(self.registration.scope)
   const response = await fetch(new URL('./index.html', scopeUrl), { cache: 'reload' })
+  if (!response.ok) throw new Error('The app shell could not be downloaded.')
   const html = await response.clone().text()
   const urls = new Set(APP_SHELL.map((path) => new URL(path, scopeUrl).href))
   const matches = html.matchAll(/(?:href|src)="([^"]+)"/g)
@@ -33,46 +34,55 @@ self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then(async (cache) => {
       await cache.addAll(await getBuildAssets())
+      await self.skipWaiting()
     }),
   )
-  self.skipWaiting()
 })
 
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches
       .keys()
-      .then((keys) =>
-        Promise.all(
+      .then(async (keys) => {
+        await Promise.all(
           keys
-            .filter((key) => key !== CACHE_NAME)
+            .filter((key) => key.startsWith('liftlog-shell-') && key !== CACHE_NAME)
             .map((key) => caches.delete(key)),
-        ),
-      ),
+        )
+        await self.clients.claim()
+      }),
   )
-  self.clients.claim()
 })
 
 self.addEventListener('fetch', (event) => {
   const request = event.request
+  const scopeUrl = new URL(self.registration.scope)
+  const requestUrl = new URL(request.url)
 
-  if (request.method !== 'GET' || new URL(request.url).origin !== location.origin) {
+  if (request.method !== 'GET' || requestUrl.origin !== scopeUrl.origin || !requestUrl.pathname.startsWith(scopeUrl.pathname)) {
     return
   }
 
   event.respondWith(
-    caches.match(request).then((cached) => {
-      if (cached) {
-        return cached
-      }
-
-      return fetch(request).then((response) => {
+    caches.open(CACHE_NAME).then(async (cache) => {
+      const cached = await cache.match(request)
+      if (cached && request.mode !== 'navigate') return cached
+      try {
+        const response = await fetch(request)
         if (response.ok) {
-          const copy = response.clone()
-          caches.open(CACHE_NAME).then((cache) => cache.put(request, copy))
+          await cache.put(request, response.clone()).catch(() => {})
+        } else if (request.mode === 'navigate') {
+          return await cache.match(new URL('./index.html', scopeUrl).href) ?? response
         }
         return response
-      })
+      } catch (error) {
+        if (cached) return cached
+        if (request.mode === 'navigate') {
+          const shell = await cache.match(new URL('./index.html', scopeUrl).href)
+          if (shell) return shell
+        }
+        throw error
+      }
     }),
   )
 })

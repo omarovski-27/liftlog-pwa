@@ -12,7 +12,8 @@ import {
   getSessionSetProgress,
   getSessionVolume,
 } from '../lib/sessions'
-import type { TrainingProgram } from '../types/program'
+import type { ExerciseMetric, TrainingProgram } from '../types/program'
+import { getExerciseMetric, getSetQuantity, SET_METRICS } from '../lib/setMetrics'
 import type { WorkoutSession } from '../types/session'
 
 interface HistoryViewProps {
@@ -41,7 +42,7 @@ export function HistoryView({ program, sessions }: HistoryViewProps) {
 
       <section className="history-summary" aria-label="Training summary">
         <div>
-          <span>This week</span>
+          <span>Week {weekProgress.currentWeek}</span>
           <strong>
             {weekProgress.completed} / {weekProgress.target}
           </strong>
@@ -180,7 +181,7 @@ function ExerciseProgress({ onSelect, selectedTrend, trends }: ExerciseProgressP
         >
           {trends.map((trend) => (
             <option key={trend.key} value={trend.key}>
-              {trend.name}
+              {trend.name}{trends.some((other) => other.key !== trend.key && other.name === trend.name) ? ` (${SET_METRICS[trend.metric].label})` : ''}
             </option>
           ))}
         </select>
@@ -228,10 +229,10 @@ function ExerciseProgress({ onSelect, selectedTrend, trends }: ExerciseProgressP
           {chart.points.map(({ point, value, height }) => (
             <div className="trend-column" key={point.id}>
               <span
-                aria-label={`${formatChartDate(point.date)}: ${formatChartValue(value, chart.weighted)}`}
+                aria-label={`${formatChartDate(point.date)}: ${formatChartValue(value, chart.weighted, point.metric)}`}
                 className="trend-bar"
                 style={{ height: `${height}%` }}
-                title={formatChartValue(value, chart.weighted)}
+                title={formatChartValue(value, chart.weighted, point.metric)}
               />
               <small>{formatChartDate(point.date)}</small>
             </div>
@@ -250,7 +251,7 @@ function ExerciseProgress({ onSelect, selectedTrend, trends }: ExerciseProgressP
               <span>
                 <strong>{formatTopSet(point)}</strong>
                 <small>
-                  {point.completedSets} sets / {point.totalReps} reps /{' '}
+                  {point.completedSets} sets / {point.totalQuantity} {SET_METRICS[point.metric].unit} /{' '}
                   {formatVolume(point.volumeKg)}
                 </small>
               </span>
@@ -267,7 +268,7 @@ function HistoryDetail({ session }: { session: WorkoutSession }) {
     <div className="history-detail">
       {session.exercises.map((exercise) => {
         const completedSets = exercise.sets.filter((set) => set.completed)
-        if (completedSets.length === 0) {
+        if (completedSets.length === 0 && !exercise.sessionNotes) {
           return null
         }
 
@@ -279,7 +280,8 @@ function HistoryDetail({ session }: { session: WorkoutSession }) {
                 <small>Instead of {exercise.originalName}</small>
               ) : null}
             </div>
-            <p>{completedSets.map((set) => formatSet(set)).join(' / ')}</p>
+            <p>{completedSets.length > 0 ? completedSets.map((set) => formatSet(set, getExerciseMetric(exercise))).join(' / ') : 'No completed sets'}</p>
+            {exercise.sessionNotes ? <p className="history-exercise-note">{exercise.sessionNotes}</p> : null}
           </div>
         )
       })}
@@ -309,9 +311,9 @@ function describeChange(trend: ExerciseTrend): {
     }
   }
 
-  const reps = latest.totalReps - previous.totalReps
+  const reps = latest.totalQuantity - previous.totalQuantity
   return {
-    label: `${reps > 0 ? '+' : ''}${reps} reps`,
+    label: `${reps > 0 ? '+' : ''}${formatLoad(reps)} ${SET_METRICS[trend.metric].unit}`,
     tone: toneFor(reps),
   }
 }
@@ -321,14 +323,14 @@ function getChart(trend: ExerciseTrend): {
   weighted: boolean
   points: Array<{ point: ExercisePerformancePoint; value: number; height: number }>
 } {
-  const recent = trend.points.slice(-8)
-  const weighted = recent.some((point) => point.estimatedOneRepMaxKg !== null)
+  const weighted = trend.latest.estimatedOneRepMaxKg !== null
+  const recent = trend.points.filter((point) => !weighted || point.estimatedOneRepMaxKg !== null).slice(-8)
   const values = recent.map((point) =>
-    weighted ? point.estimatedOneRepMaxKg ?? 0 : point.totalReps,
+    weighted ? point.estimatedOneRepMaxKg ?? 0 : point.totalQuantity,
   )
   const maximum = Math.max(1, ...values)
   return {
-    label: weighted ? 'Estimated strength trend' : 'Completed reps trend',
+    label: weighted ? 'Estimated strength trend' : `Completed ${trend.metric === 'meters' ? 'distance' : trend.metric} trend`,
     weighted,
     points: recent.map((point, index) => ({
       point,
@@ -347,8 +349,10 @@ function toneFor(value: number): 'positive' | 'negative' | 'neutral' {
 function formatTopSet(point: ExercisePerformancePoint): string {
   const set = point.topSet
   const effort = set.rir === null ? '' : ` @${set.rir}`
-  if (set.weightKg === null) return `${set.reps ?? '-'} reps${effort}`
-  return `${formatNumber(set.weightKg)}kg x ${set.reps ?? '-'}${effort}`
+  const quantity = getSetQuantity(set, point.metric) ?? '-'
+  const unit = SET_METRICS[point.metric].unit
+  if (set.weightKg === null) return `${quantity} ${unit}${effort}`
+  return `${formatLoad(set.weightKg)}kg x ${quantity}${point.metric === 'reps' ? '' : ` ${unit}`}${effort}`
 }
 
 function formatEstimatedMax(point: ExercisePerformancePoint): string {
@@ -357,10 +361,10 @@ function formatEstimatedMax(point: ExercisePerformancePoint): string {
     : `${formatNumber(point.estimatedOneRepMaxKg)}kg`
 }
 
-function formatSet(set: WorkoutSession['exercises'][number]['sets'][number]): string {
-  const weight = set.weightKg === null ? '-' : `${formatNumber(set.weightKg)}kg`
-  const reps = set.reps === null ? '-' : set.reps
-  return `${weight} x ${reps}${set.rir === null ? '' : ` @${set.rir}`}`
+function formatSet(set: WorkoutSession['exercises'][number]['sets'][number], metric: ExerciseMetric): string {
+  const weight = set.weightKg === null ? '-' : `${formatLoad(set.weightKg)}kg`
+  const quantity = getSetQuantity(set, metric) ?? '-'
+  return `${weight} x ${quantity}${metric === 'reps' ? '' : ` ${SET_METRICS[metric].unit}`}${set.rir === null ? '' : ` @${set.rir}`}`
 }
 
 function formatVolume(volume: number): string {
@@ -374,6 +378,10 @@ function formatCompactVolume(volume: number): string {
 
 function formatNumber(value: number): string {
   return Number(value.toFixed(1)).toLocaleString()
+}
+
+function formatLoad(value: number): string {
+  return value.toLocaleString(undefined, { maximumFractionDigits: 10 })
 }
 
 function formatHistoryDate(session: WorkoutSession): string {
@@ -399,8 +407,8 @@ function formatChartDate(value: string): string {
   }).format(new Date(value))
 }
 
-function formatChartValue(value: number, weighted: boolean): string {
-  return weighted ? `${formatNumber(value)}kg estimated max` : `${value} reps`
+function formatChartValue(value: number, weighted: boolean, metric: ExerciseMetric): string {
+  return weighted ? `${formatNumber(value)}kg estimated max` : `${formatLoad(value)} ${SET_METRICS[metric].unit}`
 }
 
 function shortenWorkoutTitle(title: string): string {

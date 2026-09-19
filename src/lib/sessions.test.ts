@@ -182,6 +182,33 @@ describe('workout sessions', () => {
     })
   })
 
+  it('does not copy skipped rows or overwrite current performance', () => {
+    const previous = createWorkoutSession(chestSpecializationProgram, chestSpecializationProgram.workouts[0], []).exercises[1]
+    previous.sets[0] = { ...previous.sets[0], weightKg: 30, reps: 10, completed: true }
+    previous.sets[1] = { ...previous.sets[1], weightKg: 99, reps: 99, completed: false }
+    const current = createWorkoutSession(chestSpecializationProgram, chestSpecializationProgram.workouts[0], []).exercises[1]
+    current.sets[0] = { ...current.sets[0], weightKg: 35, reps: 8, completed: true }
+
+    const copied = copyPreviousSets(current, previous)
+    expect(copied.sets[0]).toMatchObject({ weightKg: 35, reps: 8, completed: true })
+    expect(copied.sets[1]).toMatchObject({ weightKg: null, reps: null })
+  })
+
+  it('prefers actual exercise identity over a more recent substituted prescription', () => {
+    const actual = createWorkoutSession(chestSpecializationProgram, chestSpecializationProgram.workouts[0], [])
+    actual.status = 'completed'
+    actual.completedAt = '2026-09-01T10:00:00.000Z'
+    actual.exercises[1].sets[0].completed = true
+    const substitute = structuredClone(actual)
+    substitute.id = 'substitute-session'
+    substitute.completedAt = '2026-09-08T10:00:00.000Z'
+    substitute.exercises[1].performedName = 'Machine press'
+    const current = createWorkoutSession(chestSpecializationProgram, chestSpecializationProgram.workouts[0], [])
+
+    expect(getLatestExercisePerformance([actual, substitute], current, current.exercises[1])?.session.id).toBe(actual.id)
+    expect(copyPreviousSets(current.exercises[1], substitute.exercises[1])).toEqual(current.exercises[1])
+  })
+
   it('calculates volume from completed, fully entered sets only', () => {
     const session = createWorkoutSession(
       chestSpecializationProgram,

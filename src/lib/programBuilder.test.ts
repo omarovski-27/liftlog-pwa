@@ -11,6 +11,14 @@ import {
 } from './programBuilder'
 
 describe('program builder', () => {
+  it('rejects incomplete or duplicate paired-set positions', () => {
+    const draft = structuredClone(chestSpecializationProgram)
+    draft.workouts[0].exercises[4].pair!.label = 'A'
+    expect(validateProgramDraft(draft).some((issue) => issue.message.includes('one A and one B'))).toBe(true)
+    draft.workouts[0].exercises[4].pair = undefined
+    expect(validateProgramDraft(draft).some((issue) => issue.message.includes('one A and one B'))).toBe(true)
+  })
+
   it('normalizes a valid draft into a structured custom program', () => {
     const draft = createEmptyProgram()
     draft.name = '  Three Day Strength  '

@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { RotateCcw } from 'lucide-react'
 import './App.css'
 import { BottomNav, type AppTab } from './components/BottomNav'
 import { HistoryView } from './components/HistoryView'
@@ -10,6 +11,7 @@ import {
 import { ProgramView } from './components/ProgramView'
 import { SessionView } from './components/SessionView'
 import { TrainView } from './components/TrainView'
+import { ModalFrame } from './components/ModalFrame'
 import { chestSpecializationProgram } from './data/chestSpecializationProgram'
 import {
   deleteSession,
@@ -22,6 +24,7 @@ import {
   saveAlternative,
   saveProgramVersion,
   saveSession,
+  SessionConflictError,
   setActiveProgramId,
 } from './data/db'
 import { restoreBackup } from './lib/backups'
@@ -32,6 +35,7 @@ import {
 } from './lib/programBuilder'
 import { serializeProgramFile } from './lib/programImport'
 import { createWorkoutSession, getActiveSession, getNextWorkout } from './lib/sessions'
+import { getRemainingProgramSessions } from './lib/programMetrics'
 import { usePwaInstall } from './hooks/usePwaInstall'
 import type { TrainingProgram, WorkoutTemplate } from './types/program'
 import type { ExerciseAlternative, WorkoutSession } from './types/session'
@@ -48,6 +52,7 @@ interface WorkspaceSnapshot {
   currentVersion: ProgramVersion
   programVersions: ProgramVersion[]
   sessions: WorkoutSession[]
+  allSessions: WorkoutSession[]
   alternatives: ExerciseAlternative[]
   programLibrary: ProgramVersion[]
 }
@@ -66,12 +71,22 @@ function App() {
   const [programLibrary, setProgramLibrary] = useState<ProgramVersion[]>([])
   const [activeTab, setActiveTab] = useState<AppTab>('train')
   const [sessions, setSessions] = useState<WorkoutSession[]>([])
+  const [allSessions, setAllSessions] = useState<WorkoutSession[]>([])
   const [alternatives, setAlternatives] = useState<ExerciseAlternative[]>([])
   const [openSessionId, setOpenSessionId] = useState<string | null>(null)
   const [selectedWorkoutId, setSelectedWorkoutId] = useState(seedProgram.workouts[0].id)
   const [notice, setNotice] = useState<string | null>(null)
   const [storageError, setStorageError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const [openAttempt, setOpenAttempt] = useState(0)
+  const [saveState, setSaveState] = useState<'saved' | 'saving' | 'error'>('saved')
+  const [pendingStorageWrites, setPendingStorageWrites] = useState(0)
+  const [sessionBusy, setSessionBusy] = useState(false)
+  const saveQueue = useRef<Promise<void>>(Promise.resolve())
+  const latestSave = useRef(0)
+  const savedSessionDates = useRef(new Map<string, string>())
+  const [saveConflict, setSaveConflict] = useState(false)
+  const [confirmReload, setConfirmReload] = useState(false)
   const [builderRequest, setBuilderRequest] = useState<BuilderRequest | null>(null)
   const [programImportOpen, setProgramImportOpen] = useState(false)
   const install = usePwaInstall()
@@ -83,6 +98,8 @@ function App() {
     let cancelled = false
 
     async function openWorkspace() {
+      setLoading(true)
+      setStorageError(null)
       try {
         await ensureProgramVersion(seedProgram)
         const preferredProgramId = (await getActiveProgramId()) ?? seedProgram.id
@@ -104,6 +121,8 @@ function App() {
       setProgramVersions(snapshot.programVersions)
       setProgramLibrary(snapshot.programLibrary)
       setSessions(snapshot.sessions)
+      setAllSessions(snapshot.allSessions)
+      savedSessionDates.current = new Map(snapshot.allSessions.map((session) => [session.id, session.updatedAt]))
       setAlternatives(snapshot.alternatives)
 
       const activeSession = getActiveSession(snapshot.sessions)
@@ -120,7 +139,7 @@ function App() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [openAttempt])
 
   useEffect(() => {
     if (!notice) return
@@ -134,6 +153,8 @@ function App() {
     setProgramVersions(snapshot.programVersions)
     setProgramLibrary(snapshot.programLibrary)
     setSessions(snapshot.sessions)
+    setAllSessions(snapshot.allSessions)
+    savedSessionDates.current = new Map(snapshot.allSessions.map((session) => [session.id, session.updatedAt]))
     setAlternatives(snapshot.alternatives)
 
     const activeSession = getActiveSession(snapshot.sessions)
@@ -146,17 +167,72 @@ function App() {
     }
   }
 
-  function upsertSession(session: WorkoutSession) {
+  function updateSessionState(session: WorkoutSession) {
     setSessions((current) => {
+      if (session.programId !== program.id) return current
       const exists = current.some((item) => item.id === session.id)
       return exists
         ? current.map((item) => (item.id === session.id ? session : item))
         : [...current, session]
     })
-
-    void saveSession(session).catch(() => {
-      setStorageError('The latest change could not be saved.')
+    setAllSessions((current) => {
+      const exists = current.some((item) => item.id === session.id)
+      return exists
+        ? current.map((item) => (item.id === session.id ? session : item))
+        : [...current, session]
     })
+  }
+
+  function queueSessionOperation(operation: () => Promise<void>): Promise<void> {
+    const pending = saveQueue.current.catch(() => {}).then(operation)
+    saveQueue.current = pending
+    return pending
+  }
+
+  function persistSession(session: WorkoutSession): Promise<void> {
+    const saveNumber = ++latestSave.current
+    setSaveState('saving')
+    const pending = queueSessionOperation(async () => {
+      await saveSession(session, savedSessionDates.current.get(session.id))
+      savedSessionDates.current.set(session.id, session.updatedAt)
+    })
+    void pending.then(
+      () => {
+        if (saveNumber !== latestSave.current) return
+        setSaveState('saved')
+        setSaveConflict(false)
+        setStorageError(null)
+      },
+      (error: unknown) => {
+        if (saveNumber !== latestSave.current) return
+        setSaveState('error')
+        setSaveConflict(error instanceof SessionConflictError)
+        setStorageError(error instanceof SessionConflictError ? error.message : 'The latest change could not be saved. Keep this app open and retry.')
+      },
+    )
+    return pending
+  }
+
+  function upsertSession(session: WorkoutSession) {
+    updateSessionState(session)
+    void persistSession(session).catch(() => {})
+  }
+
+  function retrySessionSave() {
+    if (saveConflict) return
+    const session = getActiveSession(sessions)
+    if (session) void persistSession(session).catch(() => {})
+  }
+
+  function trackBackgroundWrite(operation: Promise<void>, errorMessage: string) {
+    setPendingStorageWrites((count) => count + 1)
+    void operation
+      .catch(() => {
+        setStorageError(errorMessage)
+      })
+      .finally(() => {
+        setPendingStorageWrites((count) => Math.max(0, count - 1))
+      })
   }
 
   function startWorkout(workout: WorkoutTemplate) {
@@ -166,6 +242,7 @@ function App() {
       setOpenSessionId(existingActive.id)
       return
     }
+    if (getRemainingProgramSessions(program, sessions.filter((session) => session.programId === program.id && session.status === 'completed').length) === 0) return
 
     const session = createWorkoutSession(
       program,
@@ -183,12 +260,13 @@ function App() {
   }
 
   function changeOpenSession(updatedSession: WorkoutSession) {
-    upsertSession({ ...updatedSession, updatedAt: new Date().toISOString() })
+    upsertSession({ ...updatedSession, updatedAt: nextSessionTimestamp(updatedSession) })
   }
 
-  function finishOpenSession() {
-    if (!openSession) return
-    const completedAt = new Date().toISOString()
+  async function finishOpenSession() {
+    if (!openSession || sessionBusy) return
+    setSessionBusy(true)
+    const completedAt = nextSessionTimestamp(openSession)
     const completedSession: WorkoutSession = {
       ...openSession,
       status: 'completed',
@@ -200,26 +278,43 @@ function App() {
     )
     const personalRecords = getSessionPersonalRecords(completedSession, sessions)
 
-    upsertSession(completedSession)
-    setSelectedWorkoutId(getNextWorkout(program, nextSessions).id)
-    setOpenSessionId(null)
-    setActiveTab('history')
-    setNotice(
-      personalRecords.length === 0
-        ? 'Workout saved'
-        : `Workout saved. ${personalRecords.length} exercise PR${personalRecords.length === 1 ? '' : 's'}`,
-    )
+    try {
+      await persistSession(completedSession)
+      updateSessionState(completedSession)
+      setSelectedWorkoutId(getNextWorkout(program, nextSessions).id)
+      setOpenSessionId(null)
+      setActiveTab('history')
+      setNotice(
+        personalRecords.length === 0
+          ? 'Workout saved'
+          : `Workout saved. ${personalRecords.length} exercise PR${personalRecords.length === 1 ? '' : 's'}`,
+      )
+    } catch {
+      // The active in-memory session remains available for a retry.
+    } finally {
+      setSessionBusy(false)
+    }
   }
 
-  function discardOpenSession() {
-    if (!openSession) return
+  async function discardOpenSession() {
+    if (!openSession || sessionBusy) return
+    setSessionBusy(true)
     const sessionId = openSession.id
-    setSessions((current) => current.filter((session) => session.id !== sessionId))
-    setOpenSessionId(null)
-    setActiveTab('train')
-    void deleteSession(sessionId).catch(() => {
-      setStorageError('The unfinished workout could not be removed.')
-    })
+    try {
+      await queueSessionOperation(() => deleteSession(sessionId, savedSessionDates.current.get(sessionId)))
+      setSessions((current) => current.filter((session) => session.id !== sessionId))
+      setAllSessions((current) => current.filter((session) => session.id !== sessionId))
+      setOpenSessionId(null)
+      setActiveTab('train')
+      setStorageError(null)
+      setSaveState('saved')
+    } catch (error) {
+      setSaveState('error')
+      setSaveConflict(error instanceof SessionConflictError)
+      setStorageError(error instanceof SessionConflictError ? error.message : 'The unfinished workout could not be removed.')
+    } finally {
+      setSessionBusy(false)
+    }
   }
 
   function replaceExercise(exerciseId: string, name: string, remember: boolean) {
@@ -263,20 +358,27 @@ function App() {
         ? current.map((item) => (item.id === alternative.id ? alternative : item))
         : [...current, alternative]
     })
-    void saveAlternative(alternative).catch(() => {
-      setStorageError('The alternative could not be remembered.')
-    })
+    trackBackgroundWrite(saveAlternative(alternative), 'The alternative could not be remembered.')
   }
 
   async function importBackup(backup: LiftLogBackup, mode: BackupRestoreMode) {
     if (getActiveSession(sessions)) {
       throw new Error('Finish or discard the active workout before restoring a backup.')
     }
-    const result = await restoreBackup(backup, mode)
-    const snapshot = await readWorkspace(result.preferredProgramId)
+    const snapshot = await changeProgramWorkspace(async () => (await restoreBackup(backup, mode)).preferredProgramId)
     applyWorkspace(snapshot)
     setStorageError(null)
     setNotice(mode === 'merge' ? 'Backup merged' : 'Backup restored')
+  }
+
+  async function reloadSavedWorkout() {
+    setConfirmReload(false)
+    setLoading(true)
+    ++latestSave.current
+    await saveQueue.current.catch(() => {})
+    setSaveConflict(false)
+    setSaveState('saved')
+    setOpenAttempt((attempt) => attempt + 1)
   }
 
   async function restoreVersion(version: ProgramVersion) {
@@ -284,14 +386,16 @@ function App() {
       throw new Error('Finish or discard the active workout before restoring a version.')
     }
 
-    const restored = await saveProgramVersion(version.program, 'restore', {
-      basedOnVersion: version.version,
-      label: `Restored from version ${version.version}`,
+    const snapshot = await changeProgramWorkspace(async () => {
+      await saveProgramVersion(version.program, 'restore', {
+        basedOnVersion: version.version,
+        label: `Restored from version ${version.version}`,
+      })
+      return version.programId
     })
-    const snapshot = await readWorkspace(version.programId)
     applyWorkspace(snapshot, false)
     setStorageError(null)
-    setNotice(`Version ${version.version} restored as version ${restored.version}`)
+    setNotice(`Version ${version.version} restored as version ${snapshot.currentVersion.version}`)
   }
 
   function createProgram() {
@@ -360,22 +464,23 @@ function App() {
 
     const editing = builderRequest.mode === 'edit'
     const importing = builderRequest.mode === 'import'
-    await saveProgramVersion(
-      nextProgram,
-      editing ? 'edit' : importing ? 'import' : 'create',
-      {
-      basedOnVersion: editing ? builderRequest.basedOnVersion : undefined,
-      label: editing
-        ? 'Edited in LiftLog'
-        : importing
-          ? 'Imported into LiftLog'
-        : builderRequest.mode === 'duplicate'
-          ? `Copied from ${builderRequest.sourceName}`
-          : 'Created in LiftLog',
-      },
-    )
-    await setActiveProgramId(nextProgram.id)
-    const snapshot = await readWorkspace(nextProgram.id)
+    const snapshot = await changeProgramWorkspace(async () => {
+      await saveProgramVersion(
+        nextProgram,
+        editing ? 'edit' : importing ? 'import' : 'create',
+        {
+          basedOnVersion: editing ? builderRequest.basedOnVersion : undefined,
+          label: editing
+            ? 'Edited in LiftLog'
+            : importing
+              ? 'Imported into LiftLog'
+              : builderRequest.mode === 'duplicate'
+                ? `Copied from ${builderRequest.sourceName}`
+                : 'Created in LiftLog',
+        },
+      )
+      return nextProgram.id
+    })
     applyWorkspace(snapshot, false)
     setBuilderRequest(null)
     setActiveTab('program')
@@ -388,8 +493,7 @@ function App() {
   async function switchProgram(programId: string) {
     if (programId === program.id || getActiveSession(sessions)) return
     try {
-      const snapshot = await readWorkspace(programId)
-      await setActiveProgramId(programId)
+      const snapshot = await changeProgramWorkspace(async () => programId)
       applyWorkspace(snapshot)
       setStorageError(null)
       setNotice(`Now using ${snapshot.program.name}`)
@@ -398,7 +502,7 @@ function App() {
     }
   }
 
-  if (loading || !currentVersion) {
+  if (loading) {
     return (
       <main className="loading-screen">
         <span className="wordmark">Liftlog</span>
@@ -406,6 +510,28 @@ function App() {
       </main>
     )
   }
+
+  if (!currentVersion) {
+    return (
+      <main className="loading-screen">
+        <span className="wordmark">Liftlog</span>
+        <p role="alert">{storageError ?? 'Workout data could not be opened on this device.'}</p>
+        <button className="secondary-button" onClick={() => setOpenAttempt((attempt) => attempt + 1)} type="button">
+          <RotateCcw aria-hidden="true" size={16} />
+          Retry
+        </button>
+      </main>
+    )
+  }
+
+  const reloadDialog = confirmReload ? <ModalFrame labelledBy="reload-heading" onClose={() => setConfirmReload(false)}>
+    <h2 id="reload-heading">Reload saved workout?</h2>
+    <p>Unsaved changes in this window will be replaced by the saved workout.</p>
+    <div className="dialog-actions">
+      <button className="secondary-button" onClick={() => setConfirmReload(false)} type="button">Keep this window</button>
+      <button className="danger-button" onClick={() => void reloadSavedWorkout()} type="button">Reload saved workout</button>
+    </div>
+  </ModalFrame> : null
 
   if (builderRequest) {
     return (
@@ -433,15 +559,19 @@ function App() {
       <>
         <SessionView
           alternatives={alternatives}
+          busy={sessionBusy}
+          locked={saveConflict}
           onBack={() => setOpenSessionId(null)}
           onChange={changeOpenSession}
           onDiscard={discardOpenSession}
           onFinish={finishOpenSession}
           onReplaceExercise={replaceExercise}
           session={openSession}
+          saveState={saveState}
           sessions={sessions}
         />
-        {storageError ? <StorageAlert message={storageError} /> : null}
+        {storageError ? <StorageAlert message={storageError} onRetry={!saveConflict && saveState === 'error' && !sessionBusy ? retrySessionSave : undefined} onReload={saveConflict ? () => setConfirmReload(true) : undefined} /> : null}
+        {reloadDialog}
       </>
     )
   }
@@ -453,6 +583,7 @@ function App() {
           <TrainView
             nextWorkout={nextWorkout}
             onResumeWorkout={resumeWorkout}
+            onRepeatProgram={() => duplicateProgram(currentVersion)}
             onSelectWorkout={setSelectedWorkoutId}
             onStartWorkout={startWorkout}
             program={program}
@@ -461,11 +592,12 @@ function App() {
           />
         ) : null}
         {activeTab === 'history' ? (
-          <HistoryView program={program} sessions={sessions} />
+          <HistoryView program={program} sessions={allSessions} />
         ) : null}
         {activeTab === 'program' ? (
           <ProgramView
             canManagePrograms={!getActiveSession(sessions)}
+            canExportBackup={saveState === 'saved' && pendingStorageWrites === 0}
             currentVersion={currentVersion}
             install={install}
             onCreateProgram={createProgram}
@@ -489,12 +621,15 @@ function App() {
           {notice}
         </div>
       ) : null}
-      {storageError ? <StorageAlert message={storageError} /> : null}
+      {storageError ? <StorageAlert message={storageError} onRetry={!saveConflict && saveState === 'error' ? retrySessionSave : undefined} onReload={saveConflict ? () => setConfirmReload(true) : undefined} /> : null}
+      {reloadDialog}
     </main>
   )
 }
 
 async function readWorkspace(preferredProgramId: string): Promise<WorkspaceSnapshot> {
+  const activeSession = getActiveSession(await liftLogDb.sessions.where('status').equals('active').toArray())
+  preferredProgramId = activeSession?.programId ?? preferredProgramId
   let allVersions = await liftLogDb.programVersions.toArray()
   if (allVersions.length === 0) {
     await ensureProgramVersion(seedProgram)
@@ -513,27 +648,49 @@ async function readWorkspace(preferredProgramId: string): Promise<WorkspaceSnaps
   if (!selectedVersion) throw new Error('No program version is available.')
 
   const records = await loadProgramRecords(selectedVersion.programId)
+  const allSessions = await liftLogDb.sessions.toArray()
   const programLibrary = await loadProgramLibrary()
   return {
     program: selectedVersion.program,
     currentVersion: selectedVersion,
     programVersions: records.programVersions,
     sessions: records.sessions,
+    allSessions,
     alternatives: records.alternatives,
     programLibrary,
   }
 }
 
-function StorageAlert({ message }: { message: string }) {
+async function changeProgramWorkspace(operation: () => Promise<string>): Promise<WorkspaceSnapshot> {
+  return liftLogDb.transaction('rw', [liftLogDb.programVersions, liftLogDb.sessions, liftLogDb.alternatives, liftLogDb.settings], async () => {
+    if (await liftLogDb.sessions.where('status').equals('active').count() > 0) throw new Error('Finish or discard the active workout before changing programs or restoring data.')
+    const snapshot = await readWorkspace(await operation())
+    await setActiveProgramId(snapshot.program.id)
+    return snapshot
+  })
+}
+
+function StorageAlert({ message, onRetry, onReload }: { message: string; onRetry?: () => void; onReload?: () => void }) {
   return (
     <div className="storage-alert" role="alert">
       {message}
+      {onRetry ? (
+        <button className="text-button" onClick={onRetry} type="button">
+          <RotateCcw aria-hidden="true" size={15} />
+          Retry saving
+        </button>
+      ) : null}
+      {onReload ? <button className="text-button" onClick={onReload} type="button"><RotateCcw aria-hidden="true" size={15} />Reload saved workout</button> : null}
     </div>
   )
 }
 
 function normalizeName(name: string): string {
   return name.trim().replace(/\s+/g, ' ').toLocaleLowerCase()
+}
+
+function nextSessionTimestamp(session: WorkoutSession): string {
+  return new Date(Math.max(Date.now(), Date.parse(session.updatedAt) + 1)).toISOString()
 }
 
 function makeAlternativeId(): string {

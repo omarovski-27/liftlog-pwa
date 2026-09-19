@@ -1,20 +1,26 @@
-import { ArrowLeft, Check, Copy, MoreHorizontal, Minus, Plus, X } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { ArrowLeft, Check, Copy, MoreHorizontal, Minus, Pencil, Plus, X } from 'lucide-react'
+import { useEffect, useId, useState } from 'react'
 import {
   copyPreviousSets,
   getLatestExercisePerformance,
   getSessionSetProgress,
 } from '../lib/sessions'
-import type { ExerciseAlternative, ExerciseLog, WorkoutSession } from '../types/session'
+import type { ExerciseAlternative, ExerciseLog, SetLog, WorkoutSession } from '../types/session'
+import type { ExerciseMetric } from '../types/program'
+import { getExerciseMetric, getSetQuantity, SET_METRICS, type SetQuantityField } from '../lib/setMetrics'
+import { ModalFrame } from './ModalFrame'
 
 interface SessionViewProps {
   session: WorkoutSession
   sessions: WorkoutSession[]
   alternatives: ExerciseAlternative[]
+  busy?: boolean
+  locked?: boolean
+  saveState?: 'saved' | 'saving' | 'error'
   onBack: () => void
   onChange: (session: WorkoutSession) => void
-  onFinish: () => void
-  onDiscard: () => void
+  onFinish: () => void | Promise<void>
+  onDiscard: () => void | Promise<void>
   onReplaceExercise: (exerciseId: string, name: string, remember: boolean) => void
 }
 
@@ -22,18 +28,26 @@ export function SessionView({
   session,
   sessions,
   alternatives,
+  busy = false,
+  locked = false,
+  saveState = 'saved',
   onBack,
   onChange,
   onFinish,
   onDiscard,
   onReplaceExercise,
 }: SessionViewProps) {
-  const [now, setNow] = useState(() => new Date(session.startedAt).getTime())
+  const [now, setNow] = useState(Date.now)
   const [swapExerciseId, setSwapExerciseId] = useState<string | null>(null)
   const [confirmFinish, setConfirmFinish] = useState(false)
   const [confirmDiscard, setConfirmDiscard] = useState(false)
+  const [removeExerciseId, setRemoveExerciseId] = useState<string | null>(null)
+  const [targetExerciseId, setTargetExerciseId] = useState<string | null>(null)
   const progress = getSessionSetProgress(session)
   const swapExercise = session.exercises.find((exercise) => exercise.id === swapExerciseId)
+  const removeExercise = session.exercises.find((exercise) => exercise.id === removeExerciseId)
+  const targetExercise = session.exercises.find((exercise) => exercise.id === targetExerciseId)
+  const pairGroups = [...new Set(session.exercises.flatMap((exercise) => exercise.pair ? [exercise.pair.group] : []))]
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1000)
@@ -55,13 +69,13 @@ export function SessionView({
   function updateSet(
     exerciseId: string,
     setId: string,
-    field: 'weightKg' | 'reps' | 'rir',
+    field: 'weightKg' | SetQuantityField | 'rir',
     value: number | null,
   ) {
     updateExercise(exerciseId, (exercise) => ({
       ...exercise,
       sets: exercise.sets.map((set) =>
-        set.id === setId ? { ...set, [field]: value } : set,
+        set.id === setId ? { ...set, ...(field === 'durationSeconds' || field === 'distanceMeters' ? { reps: null } : {}), [field]: value } : set,
       ),
     }))
   }
@@ -78,6 +92,7 @@ export function SessionView({
   function addSet(exerciseId: string) {
     updateExercise(exerciseId, (exercise) => ({
       ...exercise,
+      prescribedSets: Math.max(exercise.prescribedSets, exercise.sets.length + 1),
       sets: [
         ...exercise.sets,
         {
@@ -85,6 +100,8 @@ export function SessionView({
           number: exercise.sets.length + 1,
           weightKg: null,
           reps: null,
+          durationSeconds: null,
+          distanceMeters: null,
           rir: null,
           completed: false,
         },
@@ -93,16 +110,24 @@ export function SessionView({
   }
 
   function removeLastSet(exerciseId: string) {
+    if ((session.exercises.find((exercise) => exercise.id === exerciseId)?.sets.length ?? 0) <= 1) return
     updateExercise(exerciseId, (exercise) => ({
       ...exercise,
-      sets: exercise.sets.slice(0, -1),
+      prescribedSets: Math.min(exercise.prescribedSets, exercise.sets.length - 1),
+      sets: renumberSets(exercise.sets.slice(0, -1)),
     }))
+  }
+
+  function requestRemoveLastSet(exercise: ExerciseLog) {
+    const last = exercise.sets[exercise.sets.length - 1]
+    if (last && hasSetEntries(last)) setRemoveExerciseId(exercise.id)
+    else removeLastSet(exercise.id)
   }
 
   return (
     <main className="session-view">
       <header className="session-topbar">
-        <button className="plain-icon-button" onClick={onBack} title="Back" type="button">
+        <button className="plain-icon-button" disabled={busy} onClick={onBack} title="Back" type="button">
           <ArrowLeft aria-hidden="true" size={22} />
           <span className="sr-only">Back</span>
         </button>
@@ -113,7 +138,7 @@ export function SessionView({
             {progress.total} sets
           </span>
         </div>
-        <button className="finish-button" onClick={() => setConfirmFinish(true)} type="button">
+        <button className="finish-button" disabled={busy || locked} onClick={() => setConfirmFinish(true)} type="button">
           Finish
         </button>
       </header>
@@ -121,8 +146,12 @@ export function SessionView({
       <div className="session-heading">
         <span className="section-label">Week {session.weekNumber}</span>
         <h1>{session.workoutTitle}</h1>
+        <span className="session-save-state" data-state={saveState}>
+          {saveState === 'saving' ? 'Saving changes...' : saveState === 'error' ? 'Changes not saved' : 'Saved on this device'}
+        </span>
       </div>
 
+      <fieldset className="session-fields" disabled={busy || locked}>
       <div className="log-exercise-list">
         {session.exercises.map((exercise, exerciseIndex) => {
           const previousPerformance = getLatestExercisePerformance(
@@ -131,6 +160,8 @@ export function SessionView({
             exercise,
           )
           const previousExercise = previousPerformance?.exercise
+          const metric = getExerciseMetric(exercise)
+          const quantity = SET_METRICS[metric]
 
           return (
             <section className="log-exercise" key={exercise.id}>
@@ -160,6 +191,16 @@ export function SessionView({
                 {exercise.targetRir ? <span>{exercise.targetRir} RIR</span> : null}
                 <span>{exercise.rest} rest</span>
                 <span>{formatKind(exercise.kind)}</span>
+                {exercise.pair ? <span>Superset {pairGroups.indexOf(exercise.pair.group) + 1}{exercise.pair.label}</span> : null}
+                <button
+                  aria-label={`Edit target for ${exercise.performedName}`}
+                  className="text-button prescription-edit-button"
+                  onClick={() => setTargetExerciseId(exercise.id)}
+                  type="button"
+                >
+                  <Pencil aria-hidden="true" size={13} />
+                  Edit target
+                </button>
               </div>
 
               {exercise.prescriptionNotes ? (
@@ -174,7 +215,7 @@ export function SessionView({
                       ? ` / ${formatSessionDate(previousPerformance.session)}`
                       : ''}
                   </span>
-                  <button
+                  {sameExerciseName(exercise.performedName, previousExercise.performedName) && metric === getExerciseMetric(previousExercise) ? <button
                     className="text-button"
                     onClick={() =>
                       updateExercise(exercise.id, (current) =>
@@ -185,7 +226,7 @@ export function SessionView({
                   >
                     <Copy aria-hidden="true" size={14} />
                     Copy last
-                  </button>
+                  </button> : null}
                 </div>
               ) : null}
 
@@ -194,7 +235,7 @@ export function SessionView({
                   <span>Set</span>
                   <span>Previous</span>
                   <span>kg</span>
-                  <span>Reps</span>
+                  <span>{quantity.column}</span>
                   <span>RIR</span>
                   <span className="sr-only">Done</span>
                 </div>
@@ -208,20 +249,20 @@ export function SessionView({
                       key={set.id}
                     >
                       <span className="set-number">{set.number}</span>
-                      <span className="previous-set">{formatPreviousSet(previousSet)}</span>
+                      <span className="previous-set">{formatPreviousSet(previousSet, previousExercise ? getExerciseMetric(previousExercise) : metric)}</span>
                       <NumberInput
                         ariaLabel={`${exercise.performedName} set ${set.number} weight`}
                         max={999}
                         onChange={(value) => updateSet(exercise.id, set.id, 'weightKg', value)}
-                        step="0.5"
+                        step="any"
                         value={set.weightKg}
                       />
                       <NumberInput
-                        ariaLabel={`${exercise.performedName} set ${set.number} reps`}
-                        max={999}
-                        onChange={(value) => updateSet(exercise.id, set.id, 'reps', value)}
-                        step="1"
-                        value={set.reps}
+                        ariaLabel={`${exercise.performedName} set ${set.number} ${quantity.label.toLocaleLowerCase()}`}
+                        max={quantity.max}
+                        onChange={(value) => updateSet(exercise.id, set.id, quantity.field, value)}
+                        step={quantity.step}
+                        value={getSetQuantity(set, metric)}
                       />
                       <NumberInput
                         ariaLabel={`${exercise.performedName} set ${set.number} RIR`}
@@ -249,16 +290,15 @@ export function SessionView({
                   <Plus aria-hidden="true" size={15} />
                   Add set
                 </button>
-                {exercise.sets.length > 1 ? (
                   <button
                     className="text-button muted-button"
-                    onClick={() => removeLastSet(exercise.id)}
+                    disabled={exercise.sets.length <= 1}
+                    onClick={() => requestRemoveLastSet(exercise)}
                     type="button"
                   >
                     <Minus aria-hidden="true" size={15} />
                     Remove last
                   </button>
-                ) : null}
               </div>
 
               <details className="exercise-note-field" open={Boolean(exercise.sessionNotes)}>
@@ -295,6 +335,7 @@ export function SessionView({
       <button className="discard-button" onClick={() => setConfirmDiscard(true)} type="button">
         Discard workout
       </button>
+      </fieldset>
 
       {swapExercise ? (
         <ExerciseSwapSheet
@@ -310,27 +351,164 @@ export function SessionView({
         />
       ) : null}
 
+      {targetExercise ? (
+        <TargetEditSheet
+          exercise={targetExercise}
+          onClose={() => setTargetExerciseId(null)}
+          onSave={(nextExercise) => {
+            updateExercise(targetExercise.id, () => nextExercise)
+            setTargetExerciseId(null)
+          }}
+        />
+      ) : null}
+
       {confirmFinish ? (
         <ConfirmDialog
+          busy={busy}
           confirmLabel="Finish workout"
           description={`${progress.completed} of ${progress.total} sets are marked complete.`}
           onCancel={() => setConfirmFinish(false)}
-          onConfirm={onFinish}
+          onConfirm={() => {
+            const close = () => setConfirmFinish(false)
+            void Promise.resolve(onFinish()).then(close, close)
+          }}
           title="Finish this workout?"
         />
       ) : null}
 
       {confirmDiscard ? (
         <ConfirmDialog
+          busy={busy}
           confirmLabel="Discard"
           danger
           description="This removes the unfinished workout and its entries."
           onCancel={() => setConfirmDiscard(false)}
-          onConfirm={onDiscard}
+          onConfirm={() => {
+            const close = () => setConfirmDiscard(false)
+            void Promise.resolve(onDiscard()).then(close, close)
+          }}
           title="Discard this workout?"
         />
       ) : null}
+      {removeExercise ? <ConfirmDialog title="Remove this set?" description={`${removeExercise.performedName}: set ${removeExercise.sets.length} and its entries will be removed.`} confirmLabel="Remove set" danger onCancel={() => setRemoveExerciseId(null)} onConfirm={() => { removeLastSet(removeExercise.id); setRemoveExerciseId(null) }} /> : null}
     </main>
+  )
+}
+
+interface TargetEditSheetProps {
+  exercise: ExerciseLog
+  onClose: () => void
+  onSave: (exercise: ExerciseLog) => void
+}
+
+function TargetEditSheet({ exercise, onClose, onSave }: TargetEditSheetProps) {
+  const [sets, setSets] = useState(String(exercise.prescribedSets))
+  const [repTarget, setRepTarget] = useState(exercise.repTarget)
+  const [targetRir, setTargetRir] = useState(exercise.targetRir ?? '')
+  const [rest, setRest] = useState(exercise.rest)
+  const [error, setError] = useState<string | null>(null)
+  const metric = getExerciseMetric(exercise)
+
+  function submit() {
+    const nextSetCount = Number(sets)
+    const nextRepTarget = repTarget.trim()
+    const nextRest = rest.trim()
+    const nextTargetRir = targetRir.trim()
+    if (!Number.isSafeInteger(nextSetCount) || nextSetCount < 1 || nextSetCount > 99) {
+      setError('Enter 1 to 99 planned sets.')
+      return
+    }
+    if (!nextRepTarget) {
+      setError(metric === 'reps' ? 'Enter a rep target.' : `Enter a ${SET_METRICS[metric].label.toLocaleLowerCase()} target.`)
+      return
+    }
+    if (!nextRest) {
+      setError('Enter a rest target.')
+      return
+    }
+    if (nextSetCount < exercise.sets.length && exercise.sets.slice(nextSetCount).some(hasSetEntries)) {
+      setError('Clear the extra set entries before lowering the target.')
+      return
+    }
+
+    onSave({
+      ...exercise,
+      prescribedSets: nextSetCount,
+      repTarget: nextRepTarget,
+      targetRir: nextTargetRir || undefined,
+      rest: nextRest,
+      sets: resizeSets(exercise.sets, nextSetCount),
+    })
+  }
+
+  return (
+    <ModalFrame labelledBy="target-heading" bottom onClose={onClose}>
+      <div className="sheet-heading">
+        <div>
+          <span className="section-label">{exercise.performedName}</span>
+          <h2 id="target-heading">Edit target</h2>
+        </div>
+        <button className="plain-icon-button" onClick={onClose} title="Close" type="button">
+          <X aria-hidden="true" size={21} />
+          <span className="sr-only">Close</span>
+        </button>
+      </div>
+
+      <div className="target-editor-grid">
+        <label className="builder-field" htmlFor="target-sets">
+          <span>Planned sets</span>
+          <input
+            className="text-input"
+            id="target-sets"
+            inputMode="numeric"
+            max="99"
+            min="1"
+            onChange={(event) => setSets(event.target.value)}
+            type="number"
+            value={sets}
+          />
+        </label>
+        <label className="builder-field" htmlFor="target-reps">
+          <span>{metric === 'reps' ? 'Rep target' : `${SET_METRICS[metric].label} target`}</span>
+          <input
+            className="text-input"
+            id="target-reps"
+            onChange={(event) => setRepTarget(event.target.value)}
+            value={repTarget}
+          />
+        </label>
+        <label className="builder-field" htmlFor="target-rir">
+          <span>Target RIR</span>
+          <input
+            className="text-input"
+            id="target-rir"
+            onChange={(event) => setTargetRir(event.target.value)}
+            placeholder="Optional"
+            value={targetRir}
+          />
+        </label>
+        <label className="builder-field" htmlFor="target-rest">
+          <span>Rest</span>
+          <input
+            className="text-input"
+            id="target-rest"
+            onChange={(event) => setRest(event.target.value)}
+            value={rest}
+          />
+        </label>
+      </div>
+
+      {error ? <p className="inline-error" role="alert">{error}</p> : null}
+
+      <div className="sheet-actions">
+        <button className="secondary-button" onClick={onClose} type="button">
+          Cancel
+        </button>
+        <button className="primary-button" onClick={submit} type="button">
+          Save target
+        </button>
+      </div>
+    </ModalFrame>
   )
 }
 
@@ -343,18 +521,36 @@ interface NumberInputProps {
 }
 
 function NumberInput({ ariaLabel, value, max, step, onChange }: NumberInputProps) {
+  const [entryRejected, setEntryRejected] = useState(false)
+  const errorId = useId()
+  const message = `Entry ignored. Enter ${step === '1' ? 'a whole number' : 'a number'} from 0 to ${max}, or leave blank.`
   return (
+    <>
     <input
+      aria-describedby={entryRejected ? errorId : undefined}
       aria-label={ariaLabel}
       className="set-input"
-      inputMode="decimal"
+      data-invalid={entryRejected || undefined}
+      inputMode={step === '1' ? 'numeric' : 'decimal'}
       max={max}
       min="0"
-      onChange={(event) => onChange(toOptionalNumber(event.target.value))}
+      onChange={(event) => {
+        const number = toOptionalNumber(event.target.value)
+        if (number !== null && (number < 0 || number > max || (step === '1' && !Number.isInteger(number)))) {
+          setEntryRejected(true)
+          return
+        }
+        setEntryRejected(false)
+        onChange(number)
+      }}
       step={step}
+      style={value !== null && String(value).length > 5 ? { fontSize: `${Math.max(10, 80 / String(value).length)}px` } : undefined}
       type="number"
       value={value ?? ''}
+      title={entryRejected ? message : value === null ? undefined : String(value)}
     />
+    {entryRejected ? <span className="sr-only" id={errorId} role="alert">{message}</span> : null}
+    </>
   )
 }
 
@@ -375,17 +571,12 @@ function ExerciseSwapSheet({
     exercise.performedName === exercise.originalName ? '' : exercise.performedName,
   )
   const [remember, setRemember] = useState(true)
+  const [relabelConfirmed, setRelabelConfirmed] = useState(false)
   const trimmedName = name.trim()
+  const hasEntries = exercise.sets.some(hasSetEntries)
 
   return (
-    <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
-      <section
-        aria-labelledby="swap-heading"
-        aria-modal="true"
-        className="bottom-sheet"
-        onMouseDown={(event) => event.stopPropagation()}
-        role="dialog"
-      >
+    <ModalFrame labelledBy="swap-heading" bottom onClose={onClose}>
         <div className="sheet-heading">
           <div>
             <span className="section-label">Prescribed: {exercise.originalName}</span>
@@ -420,7 +611,7 @@ function ExerciseSwapSheet({
           Exercise name
         </label>
         <input
-          autoFocus
+          data-autofocus
           className="text-input"
           id="alternative-name"
           onChange={(event) => setName(event.target.value)}
@@ -438,10 +629,16 @@ function ExerciseSwapSheet({
           <span>Remember alternative</span>
         </label>
 
+        {hasEntries ? <>
+          <p className="restore-warning">Changing the exercise name also relabels its existing sets.</p>
+          <label className="check-label"><input type="checkbox" checked={relabelConfirmed} onChange={(event) => setRelabelConfirmed(event.target.checked)} /><span>Relabel existing sets</span></label>
+        </> : null}
+
         <div className="sheet-actions">
           {exercise.performedName !== exercise.originalName ? (
             <button
               className="secondary-button"
+              disabled={hasEntries && !relabelConfirmed}
               onClick={() => onUse(exercise.originalName, false)}
               type="button"
             >
@@ -450,19 +647,19 @@ function ExerciseSwapSheet({
           ) : null}
           <button
             className="primary-button"
-            disabled={!trimmedName}
+            disabled={!trimmedName || (hasEntries && trimmedName !== exercise.performedName && !relabelConfirmed)}
             onClick={() => onUse(trimmedName, remember)}
             type="button"
           >
             Use exercise
           </button>
         </div>
-      </section>
-    </div>
+    </ModalFrame>
   )
 }
 
 interface ConfirmDialogProps {
+  busy?: boolean
   title: string
   description: string
   confirmLabel: string
@@ -472,6 +669,7 @@ interface ConfirmDialogProps {
 }
 
 function ConfirmDialog({
+  busy = false,
   title,
   description,
   confirmLabel,
@@ -480,30 +678,23 @@ function ConfirmDialog({
   onConfirm,
 }: ConfirmDialogProps) {
   return (
-    <div className="modal-backdrop centered" role="presentation" onMouseDown={onCancel}>
-      <section
-        aria-labelledby="confirm-heading"
-        aria-modal="true"
-        className="confirm-dialog"
-        onMouseDown={(event) => event.stopPropagation()}
-        role="dialog"
-      >
+    <ModalFrame labelledBy="confirm-heading" busy={busy} onClose={onCancel}>
         <h2 id="confirm-heading">{title}</h2>
         <p>{description}</p>
         <div className="dialog-actions">
-          <button className="secondary-button" onClick={onCancel} type="button">
+          <button className="secondary-button" disabled={busy} onClick={onCancel} type="button">
             Cancel
           </button>
           <button
             className={danger ? 'danger-button' : 'primary-button'}
+            disabled={busy}
             onClick={onConfirm}
             type="button"
           >
-            {confirmLabel}
+            {busy ? 'Saving...' : confirmLabel}
           </button>
         </div>
-      </section>
-    </div>
+    </ModalFrame>
   )
 }
 
@@ -515,16 +706,53 @@ function toOptionalNumber(value: string): number | null {
   return Number.isFinite(parsed) ? parsed : null
 }
 
+function hasSetEntries(set: SetLog): boolean {
+  return set.completed || set.weightKg !== null || set.reps !== null || set.rir !== null || set.durationSeconds != null || set.distanceMeters != null
+}
+
+function resizeSets(sets: SetLog[], count: number): SetLog[] {
+  if (count <= sets.length) return renumberSets(sets.slice(0, count))
+  return [
+    ...renumberSets(sets),
+    ...Array.from({ length: count - sets.length }, (_, index) =>
+      createEmptyLoggedSet(sets.length + index + 1),
+    ),
+  ]
+}
+
+function renumberSets(sets: SetLog[]): SetLog[] {
+  return sets.map((set, index) => ({ ...set, number: index + 1 }))
+}
+
+function createEmptyLoggedSet(number: number): SetLog {
+  return {
+    id: makeSetId(),
+    number,
+    weightKg: null,
+    reps: null,
+    durationSeconds: null,
+    distanceMeters: null,
+    rir: null,
+    completed: false,
+  }
+}
+
 function formatPreviousSet(
   set: WorkoutSession['exercises'][number]['sets'][number] | undefined,
+  metric: ExerciseMetric,
 ): string {
-  if (!set || (set.weightKg === null && set.reps === null)) {
+  if (!set?.completed || (set.weightKg === null && getSetQuantity(set, metric) === null)) {
     return '-'
   }
 
   const weight = set.weightKg ?? '-'
-  const reps = set.reps ?? '-'
-  return `${weight} x ${reps}${set.rir === null ? '' : ` @${set.rir}`}`
+  const count = getSetQuantity(set, metric) ?? '-'
+  const unit = metric === 'reps' ? '' : ` ${SET_METRICS[metric].unit}`
+  return `${weight} x ${count}${unit}${set.rir === null ? '' : ` @${set.rir}`}`
+}
+
+function sameExerciseName(a: string, b: string): boolean {
+  return a.trim().replace(/\s+/g, ' ').toLocaleLowerCase() === b.trim().replace(/\s+/g, ' ').toLocaleLowerCase()
 }
 
 function formatElapsed(milliseconds: number): string {

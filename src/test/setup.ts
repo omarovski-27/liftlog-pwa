@@ -1,7 +1,7 @@
 import 'fake-indexeddb/auto'
 import '@testing-library/jest-dom/vitest'
 import { cleanup } from '@testing-library/react'
-import { afterEach, beforeEach } from 'vitest'
+import { afterEach, beforeEach, vi } from 'vitest'
 import { liftLogDb } from '../data/db'
 
 beforeEach(async () => {
@@ -13,4 +13,6 @@ beforeEach(async () => {
 
 afterEach(() => {
   cleanup()
+  vi.useRealTimers()
+  vi.restoreAllMocks()
 })

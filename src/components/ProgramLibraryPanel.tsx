@@ -116,13 +116,14 @@ export function ProgramLibraryPanel({
                 {current ? (
                   <button
                     aria-label={`Edit ${version.program.name}`}
-                    className="builder-icon-button"
+                    className="text-button"
                     disabled={!canManage}
                     onClick={onEdit}
                     title={`Edit ${version.program.name}`}
                     type="button"
                   >
                     <Pencil aria-hidden="true" size={15} />
+                    Edit
                   </button>
                 ) : null}
               </div>

@@ -9,9 +9,11 @@ import {
   type BackupSummary,
 } from '../lib/backups'
 import type { BackupRestoreMode, LiftLogBackup, ProgramVersion } from '../types/storage'
+import { ModalFrame } from './ModalFrame'
 
 interface BackupPanelProps {
   canModifyData: boolean
+  canExportData?: boolean
   currentVersion: ProgramVersion
   versions: ProgramVersion[]
   onRestoreBackup: (backup: LiftLogBackup, mode: BackupRestoreMode) => Promise<void>
@@ -26,6 +28,7 @@ interface PendingBackup {
 
 export function BackupPanel({
   canModifyData,
+  canExportData = true,
   currentVersion,
   versions,
   onRestoreBackup,
@@ -67,23 +70,26 @@ export function BackupPanel({
     }
 
     try {
+      setBusy(true)
       const backup = parseBackup(await readFile(file))
       setPendingBackup({ backup, fileName: file.name, summary: summarizeBackup(backup) })
       setRestoreMode('merge')
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'The backup could not be read.')
+    } finally {
+      setBusy(false)
     }
   }
 
   async function confirmRestore() {
-    if (!pendingBackup) return
+    if (!pendingBackup || busy || !canModifyData) return
     setBusy(true)
     setError(null)
     try {
       await onRestoreBackup(pendingBackup.backup, restoreMode)
       setPendingBackup(null)
-    } catch {
-      setError('The backup could not be restored. Your existing data was not changed.')
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'The backup could not be restored.')
     } finally {
       setBusy(false)
     }
@@ -112,7 +118,7 @@ export function BackupPanel({
       </div>
 
       <div className="backup-actions">
-        <button className="secondary-button" disabled={busy} onClick={exportBackup} type="button">
+        <button className="secondary-button" disabled={busy || !canExportData} onClick={exportBackup} type="button">
           <Download aria-hidden="true" size={16} />
           Export backup
         </button>
@@ -137,7 +143,7 @@ export function BackupPanel({
         />
       </div>
 
-      {error ? <p className="inline-error" role="alert">{error}</p> : null}
+      {error && !pendingBackup ? <p className="inline-error" role="alert">{error}</p> : null}
 
       <div className="version-list" aria-label="Program versions">
         {sortedVersions.map((version) => {
@@ -170,13 +176,7 @@ export function BackupPanel({
       </div>
 
       {pendingBackup ? (
-        <div className="modal-backdrop centered" role="presentation">
-          <section
-            aria-labelledby="backup-heading"
-            aria-modal="true"
-            className="confirm-dialog backup-dialog"
-            role="dialog"
-          >
+        <ModalFrame labelledBy="backup-heading" className="backup-dialog" busy={busy} onClose={() => setPendingBackup(null)}>
             <div className="sheet-heading">
               <div>
                 <span className="section-label">{pendingBackup.fileName}</span>
@@ -184,6 +184,7 @@ export function BackupPanel({
               </div>
               <button
                 className="plain-icon-button"
+                disabled={busy}
                 onClick={() => setPendingBackup(null)}
                 title="Close"
                 type="button"
@@ -194,10 +195,12 @@ export function BackupPanel({
             </div>
 
             <BackupContents summary={pendingBackup.summary} />
+            {error ? <p className="inline-error" role="alert">{error}</p> : null}
 
             <div className="restore-mode" aria-label="Restore mode">
               <button
                 aria-pressed={restoreMode === 'merge'}
+                disabled={busy}
                 onClick={() => setRestoreMode('merge')}
                 type="button"
               >
@@ -205,6 +208,7 @@ export function BackupPanel({
               </button>
               <button
                 aria-pressed={restoreMode === 'replace'}
+                disabled={busy}
                 onClick={() => setRestoreMode('replace')}
                 type="button"
               >
@@ -214,7 +218,7 @@ export function BackupPanel({
 
             <p className={restoreMode === 'replace' ? 'restore-warning' : ''}>
               {restoreMode === 'merge'
-                ? 'Adds backup records and keeps data already on this device.'
+                ? 'Adds backup records and updates older copies of the same workout.'
                 : 'Removes data on this device, then restores the backup exactly.'}
             </p>
 
@@ -233,11 +237,10 @@ export function BackupPanel({
                 onClick={() => void confirmRestore()}
                 type="button"
               >
-                Restore backup
+                {busy ? 'Restoring...' : 'Restore backup'}
               </button>
             </div>
-          </section>
-        </div>
+        </ModalFrame>
       ) : null}
     </section>
   )

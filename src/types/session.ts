@@ -1,15 +1,19 @@
-import type { ExerciseKind } from './program'
+import type { ExerciseKind, ExerciseMetric, ExerciseTemplate } from './program'
 
 export interface SetLog {
   id: string
   number: number
   weightKg: number | null
   reps: number | null
+  durationSeconds?: number | null
+  distanceMeters?: number | null
   rir: number | null
   completed: boolean
 }
 
 export interface ExerciseLog {
+  metric?: ExerciseMetric
+  pair?: ExerciseTemplate['pair']
   id: string
   templateExerciseId: string
   originalName: string

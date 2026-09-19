@@ -1,5 +1,6 @@
 import type {
   ExerciseKind,
+  ExerciseMetric,
   ExerciseWeekOverride,
   MuscleGroup,
   PairLabel,
@@ -12,7 +13,9 @@ import {
   createEmptyProgram,
   createEmptyWorkout,
   finalizeProgramDraft,
+  validateProgramDraft,
 } from './programBuilder'
+import { getExerciseMetric } from './setMetrics'
 
 export const PROGRAM_IMPORT_FORMAT = 'liftlog-program'
 export const PROGRAM_IMPORT_SCHEMA_VERSION = 1
@@ -37,6 +40,7 @@ export interface LiftLogProgramFile {
       name: string
       sets: number
       reps: string
+      metric?: ExerciseMetric
       rir?: string
       rest: string
       type: ExerciseKind
@@ -68,6 +72,7 @@ export class ProgramImportError extends Error {
 }
 
 export function parseProgramImport(raw: string): TrainingProgram {
+  if (new TextEncoder().encode(raw).byteLength > MAX_PROGRAM_IMPORT_BYTES) throw new ProgramImportError(['Program files must be 2 MB or smaller.'])
   const value = parseJson(raw)
   if (!isRecord(value)) {
     throw new ProgramImportError(['The program JSON must contain one object.'])
@@ -147,6 +152,13 @@ export function parseProgramImport(raw: string): TrainingProgram {
         issues,
       )
       exercise.reps = targetString(exerciseEntry.reps, `${exercisePath} reps`, issues)
+      if (exerciseEntry.metric !== undefined) {
+        if (exerciseEntry.metric === 'reps' || exerciseEntry.metric === 'seconds' || exerciseEntry.metric === 'meters') {
+          exercise.metric = exerciseEntry.metric
+        } else {
+          issues.push(`${exercisePath} metric must be reps, seconds, or meters.`)
+        }
+      }
       exercise.targetRir = optionalTargetString(
         exerciseEntry.rir,
         `${exercisePath} RIR`,
@@ -182,7 +194,7 @@ export function parseProgramImport(raw: string): TrainingProgram {
   if (issues.length > 0) throw new ProgramImportError(issues)
 
   const program = createEmptyProgram()
-  return finalizeProgramDraft({
+  const draft = {
     ...program,
     name,
     source: 'Imported from LiftLog JSON',
@@ -193,7 +205,10 @@ export function parseProgramImport(raw: string): TrainingProgram {
     constraints,
     stopTriggers,
     workouts,
-  })
+  }
+  const draftIssues = validateProgramDraft(draft)
+  if (draftIssues.length > 0) throw new ProgramImportError(draftIssues.map((issue) => issue.message))
+  return finalizeProgramDraft(draft)
 }
 
 export function createProgramFile(program: TrainingProgram): LiftLogProgramFile {
@@ -225,6 +240,7 @@ export function createProgramFile(program: TrainingProgram): LiftLogProgramFile 
             name: exercise.name,
             sets: exercise.sets,
             reps: exercise.reps,
+            metric: getExerciseMetric(exercise),
             rir: exercise.targetRir,
             rest: exercise.rest,
             type: exercise.kind,
@@ -283,6 +299,7 @@ export function getAiProgramPrompt(): string {
     'Return only valid JSON with no commentary or markdown fences.',
     `Use only these muscle values: ${muscles}.`,
     'Exercise type must be working, warm-up, or prehab.',
+    'Exercise metric must be reps, seconds, or meters. Keep the target in reps (for example "30-45 sec") and use the matching metric for timed or distance exercises.',
     'For week-specific sets or reps, add weekOverrides with startWeek, endWeek, and the fields that change.',
     'For supersets, add pair: {"group":"Pair 1","position":"A"} to both exercises and use position B on the second exercise.',
     'Follow this exact shape:',

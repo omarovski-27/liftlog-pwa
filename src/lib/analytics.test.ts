@@ -40,6 +40,33 @@ function completedPressSession(
 }
 
 describe('training analytics', () => {
+  it('tracks timed and distance exercises without rep volume or strength estimates', () => {
+    const first = completedPressSession('timed-first', '2026-09-01T10:00:00.000Z', 20, 30)
+    const second = completedPressSession('timed-second', '2026-09-08T10:00:00.000Z', 20, 30)
+    first.exercises[1].metric = 'seconds'
+    second.exercises[1].metric = 'seconds'
+    second.exercises[1].sets[0].reps = null
+    second.exercises[1].sets[0].durationSeconds = 35.5
+    const trend = getExerciseTrends([first, second])[0]
+    expect(trend).toMatchObject({ metric: 'seconds', bestTotalQuantity: 35.5, bestVolumeKg: 0, bestEstimatedOneRepMaxKg: null })
+    expect(trend.latest.totalQuantity).toBe(35.5)
+    expect(getTrainingSummary([first, second]).volumeKg).toBe(0)
+    expect(getSessionPersonalRecords(second, [first])).toContain('Incline DB press')
+    const distance = completedPressSession('distance', '2026-09-15T10:00:00.000Z', 20, 30)
+    distance.exercises[1].metric = 'meters'
+    distance.exercises[1].sets[0].reps = null
+    distance.exercises[1].sets[0].distanceMeters = 40
+    expect(getExerciseTrends([first, second, distance])).toHaveLength(2)
+    expect(getExerciseTrends([distance])[0].latest.totalQuantity).toBe(40)
+  })
+
+  it('treats zero external load as reps-only performance, not a zero strength estimate', () => {
+    const first = completedPressSession('bodyweight-first', '2026-09-01T10:00:00.000Z', 0, 10)
+    const second = completedPressSession('bodyweight-second', '2026-09-08T10:00:00.000Z', 0, 12)
+    expect(getExerciseTrends([first, second])[0].latest.estimatedOneRepMaxKg).toBeNull()
+    expect(getSessionPersonalRecords(second, [first])).toContain('Incline DB press')
+  })
+
   it('summarizes only completed sets from completed workouts', () => {
     const completed = completedPressSession(
       'completed',
@@ -90,6 +117,24 @@ describe('training analytics', () => {
     expect(getCurrentProgramWeekSessions(chestSpecializationProgram, sessions)).toEqual({
       currentWeek: 2,
       completed: 0,
+      target: 4,
+    })
+  })
+
+  it('never shows more completed sessions than the weekly target', () => {
+    const sessions = Array.from({ length: 8 }, (_, index) =>
+      completedPressSession(
+        `duplicate-week-${index}`,
+        `2026-09-${String(index + 1).padStart(2, '0')}T10:00:00.000Z`,
+        30,
+        8,
+        3,
+      ),
+    )
+
+    expect(getCurrentProgramWeekSessions(chestSpecializationProgram, sessions)).toEqual({
+      currentWeek: 3,
+      completed: 4,
       target: 4,
     })
   })
