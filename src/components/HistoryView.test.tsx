@@ -15,7 +15,8 @@ describe('completed workout history', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'Progress' }))
     expect(screen.getByRole('region', { name: 'Completed seconds trend' })).toBeInTheDocument()
     expect(screen.getByTitle('35.5 sec')).toBeInTheDocument()
-    expect(screen.getAllByText('20kg x 35.5 sec')).toHaveLength(2)
+    expect(screen.getByText('All-time best')).toBeInTheDocument()
+    expect(screen.getAllByText('20kg x 35.5 sec')).toHaveLength(3)
     expect(screen.queryByText('40kg')).not.toBeInTheDocument()
   })
 

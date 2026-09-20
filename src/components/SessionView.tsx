@@ -2,8 +2,10 @@ import { ArrowLeft, Check, Copy, MoreHorizontal, Minus, Pencil, Plus, X } from '
 import { useEffect, useId, useState } from 'react'
 import {
   copyPreviousSets,
+  getBestExercisePerformance,
   getLatestExercisePerformance,
   getSessionSetProgress,
+  hasLoggedSetData,
 } from '../lib/sessions'
 import type { ExerciseAlternative, ExerciseLog, SetLog, WorkoutSession } from '../types/session'
 import type { ExerciseMetric } from '../types/program'
@@ -74,9 +76,18 @@ export function SessionView({
   ) {
     updateExercise(exerciseId, (exercise) => ({
       ...exercise,
-      sets: exercise.sets.map((set) =>
-        set.id === setId ? { ...set, ...(field === 'durationSeconds' || field === 'distanceMeters' ? { reps: null } : {}), [field]: value } : set,
-      ),
+      sets: exercise.sets.map((set) => {
+        if (set.id !== setId) return set
+        const updated = {
+          ...set,
+          ...(field === 'durationSeconds' || field === 'distanceMeters' ? { reps: null } : {}),
+          [field]: value,
+        }
+        return {
+          ...updated,
+          completed: value !== null ? true : hasLoggedSetData(updated) ? updated.completed : false,
+        }
+      }),
     }))
   }
 
@@ -93,6 +104,10 @@ export function SessionView({
     updateExercise(exerciseId, (exercise) => ({
       ...exercise,
       prescribedSets: Math.max(exercise.prescribedSets, exercise.sets.length + 1),
+      prescriptionAdjusted:
+        (exercise.basePrescribedSets ?? exercise.prescribedSets) !==
+          Math.max(exercise.prescribedSets, exercise.sets.length + 1) ||
+        (exercise.baseRepTarget ?? exercise.repTarget) !== exercise.repTarget,
       sets: [
         ...exercise.sets,
         {
@@ -114,6 +129,10 @@ export function SessionView({
     updateExercise(exerciseId, (exercise) => ({
       ...exercise,
       prescribedSets: Math.min(exercise.prescribedSets, exercise.sets.length - 1),
+      prescriptionAdjusted:
+        (exercise.basePrescribedSets ?? exercise.prescribedSets) !==
+          Math.min(exercise.prescribedSets, exercise.sets.length - 1) ||
+        (exercise.baseRepTarget ?? exercise.repTarget) !== exercise.repTarget,
       sets: renumberSets(exercise.sets.slice(0, -1)),
     }))
   }
@@ -160,8 +179,20 @@ export function SessionView({
             exercise,
           )
           const previousExercise = previousPerformance?.exercise
+          const previousSetCount = previousExercise?.sets.filter((set) => set.completed).length ?? 0
           const metric = getExerciseMetric(exercise)
           const quantity = SET_METRICS[metric]
+          const bestPerformance = getBestExercisePerformance(
+            sessions,
+            session,
+            exercise,
+          )
+          const baseSets = exercise.basePrescribedSets ?? exercise.prescribedSets
+          const baseReps = exercise.baseRepTarget ?? exercise.repTarget
+          const adjusted =
+            exercise.prescriptionAdjusted ||
+            baseSets !== exercise.prescribedSets ||
+            baseReps !== exercise.repTarget
 
           return (
             <section className="log-exercise" key={exercise.id}>
@@ -192,6 +223,11 @@ export function SessionView({
                 <span>{exercise.rest} rest</span>
                 <span>{formatKind(exercise.kind)}</span>
                 {exercise.pair ? <span>Superset {pairGroups.indexOf(exercise.pair.group) + 1}{exercise.pair.label}</span> : null}
+                {adjusted ? (
+                  <span className="prescription-adjustment">
+                    Week {session.weekNumber} adjustment / base program {baseSets} x {baseReps}
+                  </span>
+                ) : null}
                 <button
                   aria-label={`Edit target for ${exercise.performedName}`}
                   className="text-button prescription-edit-button"
@@ -210,7 +246,7 @@ export function SessionView({
               {previousExercise ? (
                 <div className="last-session-line">
                   <span>
-                    Last: {previousExercise.performedName}
+                    Last: {previousSetCount} logged set{previousSetCount === 1 ? '' : 's'}
                     {previousPerformance
                       ? ` / ${formatSessionDate(previousPerformance.session)}`
                       : ''}
@@ -227,6 +263,15 @@ export function SessionView({
                     <Copy aria-hidden="true" size={14} />
                     Copy last
                   </button> : null}
+                </div>
+              ) : null}
+
+              {bestPerformance ? (
+                <div className="best-session-line">
+                  <span>
+                    Best set: {formatPreviousSet(bestPerformance.set, metric)} /{' '}
+                    {formatSessionDate(bestPerformance.session)}
+                  </span>
                 </div>
               ) : null}
 
@@ -435,6 +480,9 @@ function TargetEditSheet({ exercise, onClose, onSave }: TargetEditSheetProps) {
       ...exercise,
       prescribedSets: nextSetCount,
       repTarget: nextRepTarget,
+      prescriptionAdjusted:
+        (exercise.basePrescribedSets ?? exercise.prescribedSets) !== nextSetCount ||
+        (exercise.baseRepTarget ?? exercise.repTarget) !== nextRepTarget,
       targetRir: nextTargetRir || undefined,
       rest: nextRest,
       sets: resizeSets(exercise.sets, nextSetCount),

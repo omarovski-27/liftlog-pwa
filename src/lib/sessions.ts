@@ -43,7 +43,10 @@ export function createWorkoutSession(
         metric: getExerciseMetric(exercise),
         pair: exercise.pair ? { ...exercise.pair } : undefined,
         prescribedSets: prescription.sets,
+        basePrescribedSets: exercise.sets,
         repTarget: prescription.reps,
+        baseRepTarget: exercise.reps,
+        prescriptionAdjusted: prescription.overridden,
         targetRir: exercise.targetRir,
         rest: exercise.rest,
         prescriptionNotes: exercise.notes,
@@ -124,6 +127,58 @@ export function getLatestExercisePerformance(
   }
 
   return undefined
+}
+
+export function getBestExercisePerformance(
+  sessions: WorkoutSession[],
+  currentSession: WorkoutSession,
+  currentExercise: ExerciseLog,
+): { session: WorkoutSession; set: SetLog } | undefined {
+  const currentName = normalizeExerciseName(currentExercise.performedName)
+  const metric = getExerciseMetric(currentExercise)
+  let best: { session: WorkoutSession; set: SetLog } | undefined
+
+  for (const session of getCompletedSessions(sessions)) {
+    if (session.id === currentSession.id) continue
+    for (const exercise of session.exercises) {
+      if (
+        normalizeExerciseName(exercise.performedName) !== currentName ||
+        getExerciseMetric(exercise) !== metric
+      ) {
+        continue
+      }
+      for (const set of exercise.sets) {
+        if (!set.completed || !hasPerformanceData(set, metric)) continue
+        if (!best || comparePerformanceSets(set, best.set, metric) > 0) {
+          best = { session, set }
+        }
+      }
+    }
+  }
+
+  return best
+}
+
+export function finalizeSessionEntries(session: WorkoutSession): WorkoutSession {
+  return {
+    ...session,
+    exercises: session.exercises.map((exercise) => ({
+      ...exercise,
+      sets: exercise.sets.map((set) =>
+        hasLoggedSetData(set) ? { ...set, completed: true } : set,
+      ),
+    })),
+  }
+}
+
+export function hasLoggedSetData(set: SetLog): boolean {
+  return (
+    set.weightKg !== null ||
+    set.reps !== null ||
+    set.rir !== null ||
+    set.durationSeconds != null ||
+    set.distanceMeters != null
+  )
 }
 
 export function getNextWorkout(
@@ -210,6 +265,35 @@ export function copyPreviousSets(
 
 function getSessionTime(session: WorkoutSession): number {
   return new Date(session.completedAt ?? session.updatedAt ?? session.startedAt).getTime()
+}
+
+function hasPerformanceData(set: SetLog, metric: ReturnType<typeof getExerciseMetric>): boolean {
+  return set.weightKg !== null || getSetQuantity(set, metric) !== null
+}
+
+function comparePerformanceSets(
+  candidate: SetLog,
+  current: SetLog,
+  metric: ReturnType<typeof getExerciseMetric>,
+): number {
+  const candidateQuantity = getSetQuantity(candidate, metric) ?? 0
+  const currentQuantity = getSetQuantity(current, metric) ?? 0
+  if (metric !== 'reps') {
+    return candidateQuantity - currentQuantity || (candidate.weightKg ?? 0) - (current.weightKg ?? 0)
+  }
+
+  const candidateEstimate = estimatedOneRepMax(candidate)
+  const currentEstimate = estimatedOneRepMax(current)
+  return (
+    candidateEstimate - currentEstimate ||
+    (candidate.weightKg ?? 0) - (current.weightKg ?? 0) ||
+    candidateQuantity - currentQuantity
+  )
+}
+
+function estimatedOneRepMax(set: SetLog): number {
+  if (set.weightKg === null || set.reps === null) return 0
+  return set.weightKg * (1 + set.reps / 30)
 }
 
 function normalizeExerciseName(name: string): string {

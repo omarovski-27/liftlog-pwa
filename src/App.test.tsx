@@ -12,6 +12,7 @@ import {
 import { createBackup, serializeBackup } from './lib/backups'
 import { createProgramCopy } from './lib/programBuilder'
 import { createWorkoutSession } from './lib/sessions'
+import { rememberSession } from './lib/sessionRecovery'
 
 const importedProgramJson = JSON.stringify({
   format: 'liftlog-program',
@@ -142,10 +143,6 @@ describe('App', () => {
     fireEvent.change(screen.getByLabelText('Incline DB press set 1 RIR'), {
       target: { value: '2' },
     })
-    fireEvent.click(
-      screen.getByRole('button', { name: 'Mark Incline DB press set 1 complete' }),
-    )
-
     expect(
       screen.getByRole('button', { name: 'Mark Incline DB press set 1 incomplete' }),
     ).toHaveAttribute('aria-pressed', 'true')
@@ -215,6 +212,32 @@ describe('App', () => {
     expect(await screen.findByLabelText('Incline DB press set 1 weight')).toHaveValue(35)
   })
 
+  it('recovers the latest phone-safe session journal when IndexedDB missed a write', async () => {
+    const session = createWorkoutSession(
+      chestSpecializationProgram,
+      chestSpecializationProgram.workouts[0],
+      [],
+    )
+    session.exercises[1].sets[0] = {
+      ...session.exercises[1].sets[0],
+      weightKg: 35,
+      reps: 9,
+      completed: true,
+    }
+    session.updatedAt = '2026-09-20T10:00:00.000Z'
+    rememberSession(session)
+
+    render(<App />)
+
+    expect(await screen.findByLabelText('Incline DB press set 1 weight')).toHaveValue(35)
+    expect(screen.getByLabelText('Incline DB press set 1 reps')).toHaveValue(9)
+    expect((await liftLogDb.sessions.get(session.id))?.exercises[1].sets[0]).toMatchObject({
+      weightKg: 35,
+      reps: 9,
+      completed: true,
+    })
+  })
+
   it('finishes a workout and shows its numbers as previous performance next time', async () => {
     await startFirstWorkout()
 
@@ -227,9 +250,6 @@ describe('App', () => {
     fireEvent.change(screen.getByLabelText('Incline DB press set 1 RIR'), {
       target: { value: '2' },
     })
-    fireEvent.click(
-      screen.getByRole('button', { name: 'Mark Incline DB press set 1 complete' }),
-    )
     fireEvent.click(screen.getByRole('button', { name: 'Finish' }))
     fireEvent.click(
       within(screen.getByRole('dialog', { name: 'Finish this workout?' })).getByRole(
@@ -246,7 +266,8 @@ describe('App', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Start Upper Heavy' }))
 
     expect(await screen.findByText('32.5 x 8 @2')).toBeInTheDocument()
-    expect(screen.getByText(/Last: Incline DB press/)).toBeInTheDocument()
+    expect(screen.getByText(/Last: 1 logged set/)).toBeInTheDocument()
+    expect(screen.getByText(/Best set: 32.5 x 8 @2/)).toBeInTheDocument()
   }, 10000)
 
   it('shows exercise progression across completed sessions', async () => {
@@ -291,7 +312,8 @@ describe('App', () => {
     fireEvent.click(await screen.findByRole('tab', { name: 'Progress' }))
 
     const overview = screen.getByRole('region', { name: 'Incline DB press' })
-    expect(within(overview).getByText('32.5kg x 9 @2')).toBeInTheDocument()
+    expect(within(overview).getAllByText('32.5kg x 9 @2')).toHaveLength(2)
+    expect(within(overview).getByText('All-time best')).toBeInTheDocument()
     expect(within(overview).getByText('+11.2%')).toBeInTheDocument()
     expect(
       screen.getByRole('region', { name: 'Estimated strength trend' }),

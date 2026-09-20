@@ -101,6 +101,7 @@ describe('training analytics', () => {
     expect(trend.points.map((point) => point.sessionId)).toEqual(['first', 'second'])
     expect(trend.latest.topSet).toMatchObject({ weightKg: 32.5, reps: 9 })
     expect(trend.previous?.topSet).toMatchObject({ weightKg: 30, reps: 8 })
+    expect(trend.best.topSet).toMatchObject({ weightKg: 32.5, reps: 9 })
     expect(trend.bestEstimatedOneRepMaxKg).toBeCloseTo(42.25)
   })
 

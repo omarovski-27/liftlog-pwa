@@ -36,6 +36,39 @@ describe('program seed revisions', () => {
     } finally { await upgraded.delete() }
   })
 
+  it('recovers entered rows in older completed workouts and preserves the base prescription', async () => {
+    const name = `liftlog-entry-repair-test-${crypto.randomUUID()}`
+    const old = new Dexie(name)
+    old.version(5).stores({ sessions: 'id, status', programVersions: 'id, programId', alternatives: 'id', settings: 'id' })
+    const session = createWorkoutSession(chestSpecializationProgram, chestSpecializationProgram.workouts[0], [])
+    session.status = 'completed'
+    session.completedAt = '2026-09-18T10:00:00.000Z'
+    session.exercises[1].sets[0] = {
+      ...session.exercises[1].sets[0],
+      weightKg: 35,
+      reps: 8,
+      completed: false,
+    }
+    delete session.exercises[2].basePrescribedSets
+    delete session.exercises[2].baseRepTarget
+    delete session.exercises[2].prescriptionAdjusted
+    await old.table('programVersions').add({ id: 'old-version', programId: chestSpecializationProgram.id, version: 1, program: chestSpecializationProgram })
+    await old.table('sessions').add(session)
+    old.close()
+
+    const upgraded = new LiftLogDatabase(name)
+    try {
+      const restored = await upgraded.sessions.get(session.id)
+      expect(restored?.exercises[1].sets[0].completed).toBe(true)
+      expect(restored?.exercises[2]).toMatchObject({
+        prescribedSets: 3,
+        basePrescribedSets: 3,
+        baseRepTarget: '8-12',
+        prescriptionAdjusted: false,
+      })
+    } finally { await upgraded.delete() }
+  })
+
   it('prevents two windows from creating different active workouts', async () => {
     const first = createWorkoutSession(chestSpecializationProgram, chestSpecializationProgram.workouts[0], [])
     const second = createWorkoutSession(chestSpecializationProgram, chestSpecializationProgram.workouts[1], [])
@@ -77,16 +110,11 @@ describe('program seed revisions', () => {
   })
 
   it('adds a new immutable version when the bundled seed prescription advances', async () => {
-    const oldSeed = {
-      ...chestSpecializationProgram,
-      seedRevision: 1,
-      workouts: chestSpecializationProgram.workouts.map((workout) => ({
-        ...workout,
-        exercises: workout.exercises.map(({ weekOverrides: _weekOverrides, ...exercise }) =>
-          exercise,
-        ),
-      })),
-    }
+    const oldSeed = structuredClone(chestSpecializationProgram)
+    oldSeed.seedRevision = 2
+    oldSeed.workouts[0].exercises[2].weekOverrides = [
+      { startWeek: 1, endWeek: 2, sets: 2 },
+    ]
 
     const original = await ensureProgramVersion(oldSeed)
     const updated = await ensureProgramVersion(chestSpecializationProgram)
@@ -99,11 +127,9 @@ describe('program seed revisions', () => {
     expect(updated).toMatchObject({
       version: 2,
       basedOnVersion: 1,
-      label: 'Source program revision 2',
+      label: 'Source program revision 3',
     })
     expect(versions).toHaveLength(2)
-    expect(versions[1].program.workouts[0].exercises[2].weekOverrides).toEqual([
-      { startWeek: 1, endWeek: 2, sets: 2 },
-    ])
+    expect(versions[1].program.workouts[0].exercises[2].weekOverrides).toBeUndefined()
   })
 })

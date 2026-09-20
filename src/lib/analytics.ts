@@ -25,6 +25,7 @@ export interface ExerciseTrend {
   points: ExercisePerformancePoint[]
   latest: ExercisePerformancePoint
   previous?: ExercisePerformancePoint
+  best: ExercisePerformancePoint
   bestEstimatedOneRepMaxKg: number | null
   bestVolumeKg: number
   bestTotalQuantity: number
@@ -127,6 +128,9 @@ export function getExerciseTrends(sessions: WorkoutSession[]): ExerciseTrend[] {
         points: value.points,
         latest,
         previous: value.points[value.points.length - 2],
+        best: value.points
+          .slice()
+          .sort((a, b) => compareSets(a.topSet, b.topSet, value.metric))[0],
         bestEstimatedOneRepMaxKg: estimatedValues.length > 0
           ? Math.max(...estimatedValues)
           : null,

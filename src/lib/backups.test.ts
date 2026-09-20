@@ -231,7 +231,7 @@ describe('program versions and backups', () => {
 
     const backup = parseBackup(serializeBackup(await createBackup()))
 
-    expect(backup.appVersion).toBe('0.9.0')
+    expect(backup.appVersion).toBe('0.10.0')
     expect(summarizeBackup(backup)).toEqual({
       programCount: 1,
       versionCount: 1,

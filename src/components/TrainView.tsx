@@ -187,6 +187,11 @@ function WorkoutOutline({
               <strong>
                 {prescription.sets} x {prescription.reps}
               </strong>
+              {prescription.overridden ? (
+                <small className="prescription-source">
+                  Week {weekNumber} adjustment / base program {exercise.sets} x {exercise.reps}
+                </small>
+              ) : null}
             </li>
           )
         })}

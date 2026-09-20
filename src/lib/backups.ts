@@ -9,6 +9,7 @@ import type {
 } from '../types/storage'
 import { MUSCLE_GROUPS, validateProgramDraft } from './programBuilder'
 import { getExerciseMetric } from './setMetrics'
+import { hasLoggedSetData } from './sessions'
 
 export const MAX_BACKUP_BYTES = 25 * 1024 * 1024
 
@@ -48,7 +49,7 @@ export async function createBackup(): Promise<LiftLogBackup> {
   return {
     format: 'liftlog-backup',
     schemaVersion: 1,
-    appVersion: '0.9.0',
+    appVersion: '0.10.0',
     createdAt: new Date().toISOString(),
     data,
   }
@@ -127,6 +128,16 @@ export function parseBackup(raw: string): LiftLogBackup {
       }
       exercise.metric ??= getExerciseMetric({ ...template, ...exercise })
       if (!exercise.pair && template.pair) exercise.pair = { ...template.pair }
+      exercise.basePrescribedSets ??= template.sets
+      exercise.baseRepTarget ??= template.reps
+      exercise.prescriptionAdjusted ??=
+        exercise.basePrescribedSets !== exercise.prescribedSets ||
+        exercise.baseRepTarget !== exercise.repTarget
+      if (session.status === 'completed') {
+        exercise.sets.forEach((set) => {
+          if (hasLoggedSetData(set)) set.completed = true
+        })
+      }
     }
   }
 
@@ -542,7 +553,15 @@ function assertExerciseLog(value: unknown, label: string): asserts value is Exer
   }
   assertPositiveInteger(value.prescribedSets, `${label} prescribed sets`)
   if (value.prescribedSets > 99) throw new Error(`${label} prescribed sets exceed 99.`)
+  if (value.basePrescribedSets !== undefined) {
+    assertPositiveInteger(value.basePrescribedSets, `${label} base prescribed sets`)
+    if (value.basePrescribedSets > 99) throw new Error(`${label} base prescribed sets exceed 99.`)
+  }
   assertString(value.repTarget, `${label} rep target`)
+  if (value.baseRepTarget !== undefined) assertString(value.baseRepTarget, `${label} base rep target`)
+  if (value.prescriptionAdjusted !== undefined && typeof value.prescriptionAdjusted !== 'boolean') {
+    throw new Error(`${label} prescription adjustment is invalid.`)
+  }
   assertString(value.rest, `${label} rest`)
   if (value.targetRir !== undefined) assertString(value.targetRir, `${label} target RIR`)
   if (value.prescriptionNotes !== undefined) {

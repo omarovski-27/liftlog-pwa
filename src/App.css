@@ -330,6 +330,13 @@ button:disabled,
   color: var(--signal);
 }
 
+.workout-outline .prescription-source {
+  color: var(--muted);
+  font-size: 10px;
+  grid-column: 1 / -1;
+  line-height: 1.35;
+}
+
 .page-header {
   border-bottom: 1px solid var(--line);
 }
@@ -1534,6 +1541,12 @@ button:disabled,
   color: var(--ink);
 }
 
+.prescription-row .prescription-adjustment {
+  color: var(--signal);
+  flex-basis: 100%;
+  font-weight: 700;
+}
+
 .prescription-edit-button {
   margin-left: -5px;
   padding-block: 0;
@@ -1561,6 +1574,13 @@ button:disabled,
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.best-session-line {
+  color: var(--muted);
+  font-size: 11px;
+  margin-top: 7px;
+  overflow-wrap: anywhere;
 }
 
 .text-button {

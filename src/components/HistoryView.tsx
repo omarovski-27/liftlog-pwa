@@ -202,8 +202,8 @@ function ExerciseProgress({ onSelect, selectedTrend, trends }: ExerciseProgressP
             <strong>{formatTopSet(selectedTrend.latest)}</strong>
           </div>
           <div>
-            <span>Est. max</span>
-            <strong>{formatEstimatedMax(selectedTrend.latest)}</strong>
+            <span>All-time best</span>
+            <strong>{formatTopSet(selectedTrend.best)}</strong>
           </div>
           <div data-tone={change.tone}>
             <span>Vs previous</span>
@@ -353,12 +353,6 @@ function formatTopSet(point: ExercisePerformancePoint): string {
   const unit = SET_METRICS[point.metric].unit
   if (set.weightKg === null) return `${quantity} ${unit}${effort}`
   return `${formatLoad(set.weightKg)}kg x ${quantity}${point.metric === 'reps' ? '' : ` ${unit}`}${effort}`
-}
-
-function formatEstimatedMax(point: ExercisePerformancePoint): string {
-  return point.estimatedOneRepMaxKg === null
-    ? '-'
-    : `${formatNumber(point.estimatedOneRepMaxKg)}kg`
 }
 
 function formatSet(set: WorkoutSession['exercises'][number]['sets'][number], metric: ExerciseMetric): string {

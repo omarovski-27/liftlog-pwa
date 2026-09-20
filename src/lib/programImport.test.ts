@@ -120,9 +120,7 @@ ${JSON.stringify({
     expect(imported.workouts[0].exercises[3].pair?.group).toBe(
       imported.workouts[0].exercises[4].pair?.group,
     )
-    expect(imported.workouts[0].exercises[2].weekOverrides).toEqual([
-      { startWeek: 1, endWeek: 2, sets: 2, reps: undefined },
-    ])
+    expect(imported.workouts[0].exercises[2].weekOverrides).toBeUndefined()
     expect(imported.workouts[0].id).not.toBe(chestSpecializationProgram.workouts[0].id)
     expect(imported.workouts[3].exercises.find((exercise) => exercise.name === "Farmer's carry")?.metric).toBe('seconds')
   })

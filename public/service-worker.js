@@ -1,4 +1,4 @@
-const CACHE_NAME = 'liftlog-shell-v10'
+const CACHE_NAME = 'liftlog-shell-v11'
 const APP_SHELL = [
   './',
   './index.html',

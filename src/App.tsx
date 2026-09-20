@@ -21,6 +21,7 @@ import {
   liftLogDb,
   loadProgramLibrary,
   loadProgramRecords,
+  recoverRememberedSessions,
   saveAlternative,
   saveProgramVersion,
   saveSession,
@@ -34,8 +35,18 @@ import {
   createProgramCopy,
 } from './lib/programBuilder'
 import { serializeProgramFile } from './lib/programImport'
-import { createWorkoutSession, getActiveSession, getNextWorkout } from './lib/sessions'
+import {
+  createWorkoutSession,
+  finalizeSessionEntries,
+  getActiveSession,
+  getNextWorkout,
+} from './lib/sessions'
 import { getRemainingProgramSessions } from './lib/programMetrics'
+import {
+  forgetRememberedSession,
+  rememberSession,
+  replaceRememberedSessions,
+} from './lib/sessionRecovery'
 import { usePwaInstall } from './hooks/usePwaInstall'
 import type { TrainingProgram, WorkoutTemplate } from './types/program'
 import type { ExerciseAlternative, WorkoutSession } from './types/session'
@@ -101,11 +112,16 @@ function App() {
       setLoading(true)
       setStorageError(null)
       try {
+        await recoverRememberedSessions()
         await ensureProgramVersion(seedProgram)
         const preferredProgramId = (await getActiveProgramId()) ?? seedProgram.id
         const snapshot = await readWorkspace(preferredProgramId)
         await setActiveProgramId(snapshot.program.id)
-        if (!cancelled) applySnapshot(snapshot, true)
+        if (!cancelled) {
+          replaceRememberedSessions(snapshot.allSessions)
+          applySnapshot(snapshot, true)
+          void globalThis.navigator.storage?.persist?.().catch(() => false)
+        }
       } catch {
         if (!cancelled) {
           setStorageError('Workout data could not be opened on this device.')
@@ -190,6 +206,7 @@ function App() {
   }
 
   function persistSession(session: WorkoutSession): Promise<void> {
+    rememberSession(session)
     const saveNumber = ++latestSave.current
     setSaveState('saving')
     const pending = queueSessionOperation(async () => {
@@ -268,7 +285,7 @@ function App() {
     setSessionBusy(true)
     const completedAt = nextSessionTimestamp(openSession)
     const completedSession: WorkoutSession = {
-      ...openSession,
+      ...finalizeSessionEntries(openSession),
       status: 'completed',
       completedAt,
       updatedAt: completedAt,
@@ -302,6 +319,7 @@ function App() {
     const sessionId = openSession.id
     try {
       await queueSessionOperation(() => deleteSession(sessionId, savedSessionDates.current.get(sessionId)))
+      forgetRememberedSession(sessionId)
       setSessions((current) => current.filter((session) => session.id !== sessionId))
       setAllSessions((current) => current.filter((session) => session.id !== sessionId))
       setOpenSessionId(null)
@@ -366,6 +384,7 @@ function App() {
       throw new Error('Finish or discard the active workout before restoring a backup.')
     }
     const snapshot = await changeProgramWorkspace(async () => (await restoreBackup(backup, mode)).preferredProgramId)
+    replaceRememberedSessions(snapshot.allSessions)
     applyWorkspace(snapshot)
     setStorageError(null)
     setNotice(mode === 'merge' ? 'Backup merged' : 'Backup restored')
@@ -568,7 +587,7 @@ function App() {
           onReplaceExercise={replaceExercise}
           session={openSession}
           saveState={saveState}
-          sessions={sessions}
+          sessions={allSessions}
         />
         {storageError ? <StorageAlert message={storageError} onRetry={!saveConflict && saveState === 'error' && !sessionBusy ? retrySessionSave : undefined} onReload={saveConflict ? () => setConfirmReload(true) : undefined} /> : null}
         {reloadDialog}

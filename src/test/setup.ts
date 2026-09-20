@@ -5,6 +5,7 @@ import { afterEach, beforeEach, vi } from 'vitest'
 import { liftLogDb } from '../data/db'
 
 beforeEach(async () => {
+  localStorage.clear()
   await liftLogDb.sessions.clear()
   await liftLogDb.alternatives.clear()
   await liftLogDb.programVersions.clear()

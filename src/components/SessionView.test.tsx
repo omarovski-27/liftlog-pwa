@@ -46,14 +46,41 @@ describe('daily workout logger', () => {
     session.exercises = [session.exercises[2]]
     render(<Logger initial={session} />)
 
-    expect(screen.getByText('2 x 8-12')).toBeInTheDocument()
+    expect(screen.getByText('3 x 8-12')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Edit target for Flat DB press' }))
-    fireEvent.change(screen.getByLabelText('Planned sets'), { target: { value: '3' } })
+    fireEvent.change(screen.getByLabelText('Planned sets'), { target: { value: '4' } })
     fireEvent.change(screen.getByLabelText('Rep target'), { target: { value: '10-12' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save target' }))
 
-    expect(screen.getByText('3 x 10-12')).toBeInTheDocument()
-    expect(screen.getByLabelText('Flat DB press set 3 weight')).toBeInTheDocument()
+    expect(screen.getByText('4 x 10-12')).toBeInTheDocument()
+    expect(screen.getByLabelText('Flat DB press set 4 weight')).toBeInTheDocument()
+  })
+
+  it('shows the base prescription when the current week uses a set override', () => {
+    const program = structuredClone(chestSpecializationProgram)
+    program.workouts[0].exercises[2].weekOverrides = [
+      { startWeek: 1, endWeek: 2, sets: 2 },
+    ]
+    const session = createWorkoutSession(program, program.workouts[0], [])
+    session.exercises = [session.exercises[2]]
+    render(<Logger initial={session} />)
+
+    expect(screen.getByText('2 x 8-12')).toBeInTheDocument()
+    expect(screen.getByText('Week 1 adjustment / base program 3 x 8-12')).toBeInTheDocument()
+  })
+
+  it('marks a set logged as soon as a number is entered', () => {
+    const session = createWorkoutSession(chestSpecializationProgram, chestSpecializationProgram.workouts[0], [])
+    session.exercises = [session.exercises[1]]
+    render(<Logger initial={session} />)
+
+    fireEvent.change(screen.getByLabelText('Incline DB press set 1 weight'), {
+      target: { value: '35' },
+    })
+
+    expect(
+      screen.getByRole('button', { name: 'Mark Incline DB press set 1 incomplete' }),
+    ).toHaveAttribute('aria-pressed', 'true')
   })
 
   it('does not lower planned sets by deleting rows that already have entries', () => {
@@ -100,7 +127,7 @@ describe('daily workout logger', () => {
     const session = createWorkoutSession(chestSpecializationProgram, chestSpecializationProgram.workouts[0], [])
     session.startedAt = new Date(Date.now() - 10 * 60 * 1000).toISOString()
     render(<Logger initial={session} />)
-    expect(screen.getByText(/10:0[01] \/ 0 of 28 sets/)).toBeInTheDocument()
+    expect(screen.getByText(/10:0[01] \/ 0 of 29 sets/)).toBeInTheDocument()
   })
 
   it('does not display values from an uncompleted previous set', () => {
@@ -111,6 +138,25 @@ describe('daily workout logger', () => {
     const current = createWorkoutSession(chestSpecializationProgram, chestSpecializationProgram.workouts[0], [])
     render(<Logger initial={current} previous={[previous]} />)
     expect(within(screen.getByLabelText('Incline DB press sets')).queryByText('99 x 99')).not.toBeInTheDocument()
+  })
+
+  it('shows both the previous set rows and the all-time best set', () => {
+    const older = createWorkoutSession(chestSpecializationProgram, chestSpecializationProgram.workouts[0], [])
+    older.status = 'completed'
+    older.completedAt = '2026-09-01T10:00:00.000Z'
+    older.exercises[1].sets[0] = { ...older.exercises[1].sets[0], weightKg: 40, reps: 10, rir: 1, completed: true }
+    const latest = createWorkoutSession(chestSpecializationProgram, chestSpecializationProgram.workouts[0], [])
+    latest.status = 'completed'
+    latest.completedAt = '2026-09-08T10:00:00.000Z'
+    latest.exercises[1].sets[0] = { ...latest.exercises[1].sets[0], weightKg: 37.5, reps: 8, rir: 2, completed: true }
+    const current = createWorkoutSession(chestSpecializationProgram, chestSpecializationProgram.workouts[0], [])
+    current.exercises = [current.exercises[1]]
+
+    render(<Logger initial={current} previous={[older, latest]} />)
+
+    expect(screen.getByText('37.5 x 8 @2')).toBeInTheDocument()
+    expect(screen.getByText(/Last: 1 logged set/)).toBeInTheDocument()
+    expect(screen.getByText(/Best set: 40 x 10 @1/)).toBeInTheDocument()
   })
 
   it('accepts optional decimal loads but rejects negative loads, fractional reps, and out-of-range RIR', () => {

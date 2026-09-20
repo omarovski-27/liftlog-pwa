@@ -11,7 +11,7 @@ A phone-first progressive overload log for structured lifting programs. The app 
 - Clean program JSON export plus a copyable prompt for ChatGPT, Claude, or another external AI.
 - Live workout, exercise, and working-set totals with inline validation.
 - A configurable starting week for accurate mid-program progress and remaining-session counts.
-- Four seeded workout templates with the PDF's week 1-2 chest and direct-arm entry doses applied automatically.
+- Four seeded workout templates that match every exercise, set count, and rep target in the PDF tables. The PDF's week 1-2 entry-dose guidance remains visible without guessing which exercise should lose a set.
 - Active workout logging for weight, reps, RIR, completed sets, extra or removed sets, and notes.
 - Automatic IndexedDB saving and recovery of an unfinished workout after reload.
 - Previous-session values beside each current set, with a copy-last action.

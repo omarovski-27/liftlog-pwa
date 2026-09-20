@@ -20,7 +20,10 @@ export interface ExerciseLog {
   performedName: string
   kind: ExerciseKind
   prescribedSets: number
+  basePrescribedSets?: number
   repTarget: string
+  baseRepTarget?: string
+  prescriptionAdjusted?: boolean
   targetRir?: string
   rest: string
   prescriptionNotes?: string

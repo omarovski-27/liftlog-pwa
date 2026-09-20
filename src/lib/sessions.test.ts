@@ -3,6 +3,8 @@ import { chestSpecializationProgram } from '../data/chestSpecializationProgram'
 import {
   copyPreviousSets,
   createWorkoutSession,
+  finalizeSessionEntries,
+  getBestExercisePerformance,
   getLatestExercisePerformance,
   getNextWorkout,
   getSessionSetProgress,
@@ -20,23 +22,32 @@ describe('workout sessions', () => {
     expect(session.status).toBe('active')
     expect(session.programVersion).toBe(1)
     expect(session.exercises).toHaveLength(11)
-    expect(getSessionSetProgress(session)).toEqual({ completed: 0, total: 28 })
+    expect(getSessionSetProgress(session)).toEqual({ completed: 0, total: 29 })
     expect(session.exercises[1].sets).toHaveLength(4)
-    expect(session.exercises[2].sets).toHaveLength(2)
+    expect(session.exercises[2].sets).toHaveLength(3)
+    expect(session.exercises[2]).toMatchObject({
+      prescribedSets: 3,
+      basePrescribedSets: 3,
+      prescriptionAdjusted: false,
+    })
   })
 
   it('uses the base prescription after a week override ends', () => {
+    const program = structuredClone(chestSpecializationProgram)
+    program.workouts[0].exercises[2].weekOverrides = [
+      { startWeek: 1, endWeek: 2, sets: 2 },
+    ]
     const completedSessions = Array.from({ length: 8 }, () => ({
       ...createWorkoutSession(
-        chestSpecializationProgram,
-        chestSpecializationProgram.workouts[0],
+        program,
+        program.workouts[0],
         [],
       ),
       status: 'completed' as const,
     }))
     const session = createWorkoutSession(
-      chestSpecializationProgram,
-      chestSpecializationProgram.workouts[0],
+      program,
+      program.workouts[0],
       completedSessions,
     )
 
@@ -229,5 +240,38 @@ describe('workout sessions', () => {
     }
 
     expect(getSessionVolume(session)).toBe(300)
+  })
+
+  it('repairs entered rows when a workout is finished without tapping every checkmark', () => {
+    const session = createWorkoutSession(
+      chestSpecializationProgram,
+      chestSpecializationProgram.workouts[0],
+      [],
+    )
+    session.exercises[1].sets[0] = {
+      ...session.exercises[1].sets[0],
+      weightKg: 35,
+      reps: 8,
+      rir: 2,
+    }
+
+    expect(finalizeSessionEntries(session).exercises[1].sets[0].completed).toBe(true)
+  })
+
+  it('finds the all-time best set across completed sessions', () => {
+    const first = createWorkoutSession(chestSpecializationProgram, chestSpecializationProgram.workouts[0], [])
+    const second = createWorkoutSession(chestSpecializationProgram, chestSpecializationProgram.workouts[0], [])
+    const current = createWorkoutSession(chestSpecializationProgram, chestSpecializationProgram.workouts[0], [])
+    first.status = 'completed'
+    second.status = 'completed'
+    first.completedAt = '2026-09-01T10:00:00.000Z'
+    second.completedAt = '2026-09-08T10:00:00.000Z'
+    first.exercises[1].sets[0] = { ...first.exercises[1].sets[0], weightKg: 35, reps: 10, completed: true }
+    second.exercises[1].sets[0] = { ...second.exercises[1].sets[0], weightKg: 37.5, reps: 6, completed: true }
+
+    const best = getBestExercisePerformance([first, second], current, current.exercises[1])
+
+    expect(best?.session.id).toBe(first.id)
+    expect(best?.set).toMatchObject({ weightKg: 35, reps: 10 })
   })
 })

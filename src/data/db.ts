@@ -7,7 +7,9 @@ import type {
   ProgramVersionReason,
 } from '../types/storage'
 import { getExerciseMetric } from '../lib/setMetrics'
+import { hasLoggedSetData } from '../lib/sessions'
 import { ProgramDraftError, validateProgramDraft } from '../lib/programBuilder'
+import { readRememberedSessions } from '../lib/sessionRecovery'
 
 export class LiftLogDatabase extends Dexie {
   sessions!: Table<WorkoutSession, string>
@@ -70,10 +72,53 @@ export class LiftLogDatabase extends Dexie {
         })
       })
     })
+    this.version(6).stores({}).upgrade(async (transaction) => {
+      const versions = await transaction.table<ProgramVersion, string>('programVersions').toArray()
+      await transaction.table<WorkoutSession, string>('sessions').toCollection().modify((session) => {
+        const version = versions.find(
+          (entry) => entry.programId === session.programId && entry.version === session.programVersion,
+        )
+        const workout = version?.program.workouts.find(
+          (entry) => entry.id === session.workoutTemplateId,
+        )
+        session.exercises.forEach((exercise) => {
+          const template = workout?.exercises.find(
+            (entry) => entry.id === exercise.templateExerciseId,
+          )
+          exercise.basePrescribedSets ??= template?.sets ?? exercise.prescribedSets
+          exercise.baseRepTarget ??= template?.reps ?? exercise.repTarget
+          exercise.prescriptionAdjusted ??=
+            exercise.basePrescribedSets !== exercise.prescribedSets ||
+            exercise.baseRepTarget !== exercise.repTarget
+          if (session.status === 'completed') {
+            exercise.sets.forEach((set) => {
+              if (hasLoggedSetData(set)) set.completed = true
+            })
+          }
+        })
+      })
+    })
   }
 }
 
 export const liftLogDb = new LiftLogDatabase()
+
+export async function recoverRememberedSessions(): Promise<number> {
+  const remembered = readRememberedSessions()
+  if (remembered.length === 0) return 0
+
+  return liftLogDb.transaction('rw', liftLogDb.sessions, async () => {
+    let recovered = 0
+    for (const session of remembered) {
+      const existing = await liftLogDb.sessions.get(session.id)
+      if (!existing || Date.parse(session.updatedAt) > Date.parse(existing.updatedAt)) {
+        await liftLogDb.sessions.put(session)
+        recovered += 1
+      }
+    }
+    return recovered
+  })
+}
 
 export async function loadProgramRecords(programId: string): Promise<{
   sessions: WorkoutSession[]
