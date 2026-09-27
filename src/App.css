@@ -91,6 +91,18 @@
   font-variant-numeric: tabular-nums;
 }
 
+.progress-value-with-action {
+  align-items: center;
+  display: flex;
+  gap: 7px;
+}
+
+.compact-icon-button {
+  height: 28px;
+  min-height: 28px;
+  width: 28px;
+}
+
 .progress-number {
   text-align: right;
 }
@@ -193,6 +205,42 @@ button:disabled,
 .next-workout .primary-button {
   margin-top: 18px;
   width: 100%;
+}
+
+.workout-chooser {
+  display: grid;
+  gap: 5px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-top: 16px;
+}
+
+.workout-chooser button {
+  background: #32312f;
+  border: 1px solid #4b4946;
+  border-radius: 4px;
+  color: #d7d6d2;
+  font-size: 11px;
+  font-weight: 700;
+  min-height: 36px;
+  padding: 0 4px;
+}
+
+.workout-chooser button[aria-pressed='true'] {
+  background: #ffffff;
+  border-color: #ffffff;
+  color: var(--ink);
+}
+
+.repeat-program-button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: #d7d6d2;
+  display: flex;
+  font-size: 12px;
+  gap: 6px;
+  justify-content: center;
+  margin: 12px auto 0;
 }
 
 .full-width {
@@ -351,6 +399,10 @@ button:disabled,
   font-size: 13px;
 }
 
+.history-import-button {
+  margin-top: 15px;
+}
+
 .empty-state {
   padding: 72px 0;
   text-align: center;
@@ -420,6 +472,10 @@ button:disabled,
   font-size: 13px;
   margin-top: 12px;
   padding-top: 12px;
+}
+
+.edit-history-button {
+  margin-top: 14px;
 }
 
 .history-summary {
@@ -1705,12 +1761,22 @@ textarea:focus {
 .exercise-actions {
   align-items: center;
   display: flex;
+  flex-wrap: wrap;
   gap: 14px;
   margin: 10px 0 0 28px;
 }
 
 .muted-button {
   color: var(--muted);
+}
+
+.danger-text-button {
+  color: var(--danger);
+}
+
+.add-exercise-button {
+  margin: 18px 16px 0;
+  width: calc(100% - 32px);
 }
 
 .exercise-note-field {
@@ -1869,6 +1935,17 @@ textarea {
   color: var(--muted);
   font-size: 11px;
   font-weight: 700;
+}
+
+.target-editor-wide {
+  grid-column: 1 / -1;
+}
+
+.sheet-note {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+  margin: 12px 0 0;
 }
 
 .confirm-dialog {

@@ -49,7 +49,7 @@ export async function createBackup(): Promise<LiftLogBackup> {
   return {
     format: 'liftlog-backup',
     schemaVersion: 1,
-    appVersion: '0.10.0',
+    appVersion: '0.11.0',
     createdAt: new Date().toISOString(),
     data,
   }
@@ -123,13 +123,13 @@ export function parseBackup(raw: string): LiftLogBackup {
     if (session.weekNumber > version.program.durationWeeks) throw new Error(`Session ${session.id} week exceeds its program duration.`)
     for (const exercise of session.exercises) {
       const template = workout.exercises.find((entry) => entry.id === exercise.templateExerciseId)
-      if (!template) {
+      if (!template && !exercise.addedDuringSession) {
         throw new Error(`Session ${session.id} refers to a missing template exercise.`)
       }
       exercise.metric ??= getExerciseMetric({ ...template, ...exercise })
-      if (!exercise.pair && template.pair) exercise.pair = { ...template.pair }
-      exercise.basePrescribedSets ??= template.sets
-      exercise.baseRepTarget ??= template.reps
+      if (!exercise.pair && template?.pair) exercise.pair = { ...template.pair }
+      exercise.basePrescribedSets ??= template?.sets ?? exercise.prescribedSets
+      exercise.baseRepTarget ??= template?.reps ?? exercise.repTarget
       exercise.prescriptionAdjusted ??=
         exercise.basePrescribedSets !== exercise.prescribedSets ||
         exercise.baseRepTarget !== exercise.repTarget
@@ -221,9 +221,13 @@ export async function restoreBackup(
         liftLogDb.sessions.toArray(),
         liftLogDb.alternatives.toArray(),
       ])
-      const { versionsToAdd, versionNumberMap } = mergeProgramVersions(
+      const { versionsToAdd: importedVersions, versionNumberMap } = mergeProgramVersions(
         existingVersions,
         backup.data.programVersions,
+      )
+      const versionsToAdd = preserveCurrentProgramVersions(
+        existingVersions,
+        importedVersions,
       )
       const existingBySessionId = new Map(existingSessions.map((session) => [session.id, session]))
       const existingByAlternativeId = new Map(existingAlternatives.map((alternative) => [alternative.id, alternative]))
@@ -293,6 +297,7 @@ function mergeProgramVersions(
   versionNumberMap: Map<string, number>
 } {
   const existingById = new Map(existing.map((version) => [version.id, version]))
+  const existingByPrescription = new Map<string, ProgramVersion>()
   const usedVersions = new Map<string, Set<number>>()
   const maximumVersions = new Map<string, number>()
   const versionNumberMap = new Map<string, number>()
@@ -305,6 +310,11 @@ function mergeProgramVersions(
       version.programId,
       Math.max(maximumVersions.get(version.programId) ?? 0, version.version),
     )
+    const prescriptionKey = getPrescriptionKey(version)
+    const matchingPrescription = existingByPrescription.get(prescriptionKey)
+    if (!matchingPrescription || matchingPrescription.version < version.version) {
+      existingByPrescription.set(prescriptionKey, version)
+    }
   }
 
   const versionsToAdd: ProgramVersion[] = []
@@ -319,9 +329,15 @@ function mergeProgramVersions(
       continue
     }
 
+    const samePrescription = existingByPrescription.get(getPrescriptionKey(version))
+    if (samePrescription) {
+      versionNumberMap.set(key, samePrescription.version)
+      continue
+    }
+
     const used = usedVersions.get(version.programId) ?? new Set<number>()
     let nextVersion = version.version
-    if (used.has(nextVersion)) {
+    if (nextVersion <= (maximumVersions.get(version.programId) ?? 0)) {
       nextVersion = (maximumVersions.get(version.programId) ?? 0) + 1
     }
     used.add(nextVersion)
@@ -352,6 +368,57 @@ function mergeProgramVersions(
     })),
     versionNumberMap,
   }
+}
+
+function preserveCurrentProgramVersions(
+  existing: ProgramVersion[],
+  imported: ProgramVersion[],
+): ProgramVersion[] {
+  const versionsToAdd = imported.slice()
+  const latestExisting = new Map<string, ProgramVersion>()
+
+  for (const version of existing) {
+    const latest = latestExisting.get(version.programId)
+    if (!latest || version.version > latest.version) {
+      latestExisting.set(version.programId, version)
+    }
+  }
+
+  for (const [programId, current] of latestExisting) {
+    const importedForProgram = imported.filter((version) => version.programId === programId)
+    if (importedForProgram.length === 0) continue
+    const highestImportedVersion = Math.max(
+      ...importedForProgram.map((version) => version.version),
+    )
+    if (highestImportedVersion <= current.version) continue
+
+    const nextVersion = Math.max(
+      current.version,
+      ...versionsToAdd
+        .filter((version) => version.programId === programId)
+        .map((version) => version.version),
+    ) + 1
+    versionsToAdd.push({
+      ...current,
+      id: makeProgramVersionId(),
+      version: nextVersion,
+      createdAt: new Date().toISOString(),
+      reason: 'restore',
+      basedOnVersion: current.version,
+      label: 'Kept current program after data merge',
+    })
+  }
+
+  return versionsToAdd
+}
+
+function getPrescriptionKey(version: ProgramVersion): string {
+  return `${version.programId}:${JSON.stringify(canonicalValue(version.program))}`
+}
+
+function makeProgramVersionId(): string {
+  const id = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`
+  return `program-version-${id}`
 }
 
 function assertProgramVersion(value: unknown, label: string): asserts value is ProgramVersion {
@@ -562,6 +629,9 @@ function assertExerciseLog(value: unknown, label: string): asserts value is Exer
   if (value.prescriptionAdjusted !== undefined && typeof value.prescriptionAdjusted !== 'boolean') {
     throw new Error(`${label} prescription adjustment is invalid.`)
   }
+  if (value.addedDuringSession !== undefined && typeof value.addedDuringSession !== 'boolean') {
+    throw new Error(`${label} added-during-workout value is invalid.`)
+  }
   assertString(value.rest, `${label} rest`)
   if (value.targetRir !== undefined) assertString(value.targetRir, `${label} target RIR`)
   if (value.prescriptionNotes !== undefined) {
@@ -595,6 +665,9 @@ function assertAlternative(value: unknown, label: string): asserts value is Exer
   assertDate(value.createdAt, `${label} creation date`)
   assertDate(value.lastUsedAt, `${label} last-used date`)
   assertPositiveInteger(value.timesUsed, `${label} use count`)
+  if (value.useByDefault !== undefined && typeof value.useByDefault !== 'boolean') {
+    throw new Error(`${label} default preference is invalid.`)
+  }
 }
 
 function assertRecord(value: unknown, label: string): asserts value is Record<string, unknown> {

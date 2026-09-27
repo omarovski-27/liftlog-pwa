@@ -83,6 +83,27 @@ describe('program versions and backups', () => {
     expect(() => parseBackup(JSON.stringify(duplicates))).toThrow(/duplicate set/)
   })
 
+  it('round trips an exercise added during a workout', async () => {
+    await ensureProgramVersion(chestSpecializationProgram)
+    const session = createWorkoutSession(chestSpecializationProgram, chestSpecializationProgram.workouts[0], [])
+    session.exercises[1] = {
+      ...session.exercises[1],
+      templateExerciseId: 'session-added-machine-pullover',
+      originalName: 'Machine pullover',
+      performedName: 'Machine pullover',
+      addedDuringSession: true,
+    }
+    await liftLogDb.sessions.add(session)
+
+    const restored = parseBackup(serializeBackup(await createBackup()))
+
+    expect(restored.data.sessions[0].exercises[1]).toMatchObject({
+      templateExerciseId: 'session-added-machine-pullover',
+      performedName: 'Machine pullover',
+      addedDuringSession: true,
+    })
+  })
+
   it('merges a newer session snapshot without reverting completed history to active', async () => {
     await ensureProgramVersion(chestSpecializationProgram)
     const session = createWorkoutSession(chestSpecializationProgram, chestSpecializationProgram.workouts[0], [])
@@ -231,7 +252,7 @@ describe('program versions and backups', () => {
 
     const backup = parseBackup(serializeBackup(await createBackup()))
 
-    expect(backup.appVersion).toBe('0.10.0')
+    expect(backup.appVersion).toBe('0.11.0')
     expect(summarizeBackup(backup)).toEqual({
       programCount: 1,
       versionCount: 1,
@@ -305,6 +326,9 @@ describe('program versions and backups', () => {
 
   it('renumbers a colliding imported version and keeps its session linked', async () => {
     await ensureProgramVersion(chestSpecializationProgram)
+    const foreignProgram = structuredClone(chestSpecializationProgram)
+    foreignProgram.name = 'Chest Specialization - Gym Copy'
+    foreignProgram.workouts[1].exercises[0].sets = 2
     const foreignVersion: ProgramVersion = {
       id: 'foreign-version',
       programId: chestSpecializationProgram.id,
@@ -312,11 +336,11 @@ describe('program versions and backups', () => {
       createdAt: '2026-09-13T12:00:00.000Z',
       reason: 'import',
       label: 'Gym copy',
-      program: chestSpecializationProgram,
+      program: foreignProgram,
     }
     const foreignSession = createWorkoutSession(
-      chestSpecializationProgram,
-      chestSpecializationProgram.workouts[1],
+      foreignProgram,
+      foreignProgram.workouts[1],
       [],
       1,
     )
@@ -339,9 +363,48 @@ describe('program versions and backups', () => {
       .equals(chestSpecializationProgram.id)
       .sortBy('version')
     const importedSession = await liftLogDb.sessions.get(foreignSession.id)
-    expect(versions.map((version) => version.version)).toEqual([1, 2])
+    expect(versions.map((version) => version.version)).toEqual([1, 2, 3])
     expect(versions[1].reason).toBe('import')
+    expect(versions[2]).toMatchObject({
+      reason: 'restore',
+      basedOnVersion: 1,
+      program: chestSpecializationProgram,
+    })
     expect(importedSession?.programVersion).toBe(2)
+  })
+
+  it('reuses an existing identical prescription from a differently identified backup', async () => {
+    await ensureProgramVersion(chestSpecializationProgram)
+    const foreignVersion: ProgramVersion = {
+      id: 'same-prescription-foreign-version',
+      programId: chestSpecializationProgram.id,
+      version: 1,
+      createdAt: '2026-09-13T12:00:00.000Z',
+      reason: 'import',
+      program: structuredClone(chestSpecializationProgram),
+    }
+    const foreignSession = createWorkoutSession(
+      chestSpecializationProgram,
+      chestSpecializationProgram.workouts[0],
+      [],
+      1,
+    )
+    const backup: LiftLogBackup = {
+      format: 'liftlog-backup',
+      schemaVersion: 1,
+      appVersion: '0.3.0',
+      createdAt: '2026-09-13T12:05:00.000Z',
+      data: {
+        programVersions: [foreignVersion],
+        sessions: [foreignSession],
+        alternatives: [],
+      },
+    }
+
+    await restoreBackup(backup, 'merge')
+
+    expect(await liftLogDb.programVersions.count()).toBe(1)
+    expect((await liftLogDb.sessions.get(foreignSession.id))?.programVersion).toBe(1)
   })
 
   it('keeps local records when a merged backup contains the same ids', async () => {

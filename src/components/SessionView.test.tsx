@@ -56,6 +56,24 @@ describe('daily workout logger', () => {
     expect(screen.getByLabelText('Flat DB press set 4 weight')).toBeInTheDocument()
   })
 
+  it('adds a fully editable exercise to the current workout', () => {
+    const session = createWorkoutSession(chestSpecializationProgram, chestSpecializationProgram.workouts[0], [])
+    render(<Logger initial={session} />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add exercise' }))
+    const dialog = screen.getByRole('dialog', { name: 'Add exercise' })
+    fireEvent.change(within(dialog).getByLabelText('Exercise name'), {
+      target: { value: 'Machine pullover' },
+    })
+    fireEvent.change(within(dialog).getByLabelText('Planned sets'), {
+      target: { value: '4' },
+    })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Add exercise' }))
+
+    expect(screen.getByRole('heading', { name: 'Machine pullover' })).toBeInTheDocument()
+    expect(screen.getByLabelText('Machine pullover set 4 weight')).toBeInTheDocument()
+  })
+
   it('shows the base prescription when the current week uses a set override', () => {
     const program = structuredClone(chestSpecializationProgram)
     program.workouts[0].exercises[2].weekOverrides = [
@@ -155,7 +173,7 @@ describe('daily workout logger', () => {
     render(<Logger initial={current} previous={[older, latest]} />)
 
     expect(screen.getByText('37.5 x 8 @2')).toBeInTheDocument()
-    expect(screen.getByText(/Last: 1 logged set/)).toBeInTheDocument()
+    expect(screen.getByText(/Last: Incline DB press \/ 1 logged set/)).toBeInTheDocument()
     expect(screen.getByText(/Best set: 40 x 10 @1/)).toBeInTheDocument()
   })
 

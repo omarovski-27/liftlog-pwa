@@ -1,4 +1,4 @@
-import { ChevronDown, TrendingDown, TrendingUp } from 'lucide-react'
+import { ChevronDown, Pencil, TrendingDown, TrendingUp, Upload, X } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import {
   getCurrentProgramWeekSessions,
@@ -15,13 +15,18 @@ import {
 import type { ExerciseMetric, TrainingProgram } from '../types/program'
 import { getExerciseMetric, getSetQuantity, SET_METRICS } from '../lib/setMetrics'
 import type { WorkoutSession } from '../types/session'
+import { MAX_BACKUP_BYTES, parseBackup, summarizeBackup } from '../lib/backups'
+import type { LiftLogBackup } from '../types/storage'
+import { ModalFrame } from './ModalFrame'
 
 interface HistoryViewProps {
   program: TrainingProgram
   sessions: WorkoutSession[]
+  onEditSession?: (session: WorkoutSession) => void
+  onMergeBackup?: (backup: LiftLogBackup) => Promise<void>
 }
 
-export function HistoryView({ program, sessions }: HistoryViewProps) {
+export function HistoryView({ onEditSession, onMergeBackup, program, sessions }: HistoryViewProps) {
   const completedSessions = getCompletedSessions(sessions)
   const summary = useMemo(() => getTrainingSummary(sessions), [sessions])
   const trends = useMemo(() => getExerciseTrends(sessions), [sessions])
@@ -38,6 +43,7 @@ export function HistoryView({ program, sessions }: HistoryViewProps) {
         <span className="section-label">Logbook</span>
         <h1>History</h1>
         <p>{completedSessions.length} completed workouts</p>
+        {onMergeBackup ? <HistoryRecoveryButton onMerge={onMergeBackup} /> : null}
       </header>
 
       <section className="history-summary" aria-label="Training summary">
@@ -79,6 +85,8 @@ export function HistoryView({ program, sessions }: HistoryViewProps) {
       {mode === 'sessions' ? (
         <SessionHistory
           completedSessions={completedSessions}
+          editableProgramId={program.id}
+          onEditSession={onEditSession}
           onToggle={setOpenSessionId}
           openSessionId={openSessionId}
         />
@@ -93,14 +101,100 @@ export function HistoryView({ program, sessions }: HistoryViewProps) {
   )
 }
 
+function HistoryRecoveryButton({ onMerge }: { onMerge: (backup: LiftLogBackup) => Promise<void> }) {
+  const [pending, setPending] = useState<{ backup: LiftLogBackup; fileName: string } | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  async function selectFile(file: File | undefined) {
+    if (!file) return
+    setError(null)
+    if (file.size > MAX_BACKUP_BYTES) {
+      setError('The backup is larger than 25 MB.')
+      return
+    }
+    try {
+      setPending({ backup: parseBackup(await readFile(file)), fileName: file.name })
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'The backup could not be read.')
+    }
+  }
+
+  async function merge() {
+    if (!pending || busy) return
+    setBusy(true)
+    setError(null)
+    try {
+      await onMerge(pending.backup)
+      setPending(null)
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'The backup could not be merged.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const summary = pending ? summarizeBackup(pending.backup) : null
+  return (
+    <>
+      <label className="secondary-button history-import-button" htmlFor="history-backup-upload">
+        <Upload aria-hidden="true" size={15} />
+        Import previous data
+      </label>
+      <input
+        accept="application/json,.json"
+        className="sr-only"
+        id="history-backup-upload"
+        onChange={(event) => {
+          void selectFile(event.target.files?.[0])
+          event.target.value = ''
+        }}
+        type="file"
+      />
+      {error && !pending ? <p className="inline-error" role="alert">{error}</p> : null}
+      {pending && summary ? (
+        <ModalFrame labelledBy="history-import-heading" busy={busy} onClose={() => setPending(null)}>
+          <div className="sheet-heading">
+            <div>
+              <span className="section-label">{pending.fileName}</span>
+              <h2 id="history-import-heading">Import previous data</h2>
+            </div>
+            <button className="plain-icon-button" disabled={busy} onClick={() => setPending(null)} title="Close" type="button">
+              <X aria-hidden="true" size={20} />
+              <span className="sr-only">Close</span>
+            </button>
+          </div>
+          <dl className="backup-summary">
+            <div><dt>Finished</dt><dd>{summary.completedSessionCount}</dd></div>
+            <div><dt>Active</dt><dd>{summary.activeSessionCount}</dd></div>
+            <div><dt>Alternatives</dt><dd>{summary.alternativeCount}</dd></div>
+          </dl>
+          <p className="sheet-note">Existing workouts stay in place. Matching records are updated only when the backup copy is newer.</p>
+          {error ? <p className="inline-error" role="alert">{error}</p> : null}
+          <div className="dialog-actions">
+            <button className="secondary-button" disabled={busy} onClick={() => setPending(null)} type="button">Cancel</button>
+            <button className="primary-button" disabled={busy} onClick={() => void merge()} type="button">
+              {busy ? 'Importing...' : 'Merge data'}
+            </button>
+          </div>
+        </ModalFrame>
+      ) : null}
+    </>
+  )
+}
+
 interface SessionHistoryProps {
   completedSessions: WorkoutSession[]
+  editableProgramId: string
+  onEditSession?: (session: WorkoutSession) => void
   onToggle: (sessionId: string | null) => void
   openSessionId: string | null
 }
 
 function SessionHistory({
   completedSessions,
+  editableProgramId,
+  onEditSession,
   onToggle,
   openSessionId,
 }: SessionHistoryProps) {
@@ -143,7 +237,13 @@ function SessionHistory({
               />
             </button>
 
-            {open ? <HistoryDetail session={session} /> : null}
+            {open ? (
+              <HistoryDetail
+                editable={session.programId === editableProgramId}
+                onEdit={onEditSession ? () => onEditSession(session) : undefined}
+                session={session}
+              />
+            ) : null}
           </article>
         )
       })}
@@ -263,7 +363,15 @@ function ExerciseProgress({ onSelect, selectedTrend, trends }: ExerciseProgressP
   )
 }
 
-function HistoryDetail({ session }: { session: WorkoutSession }) {
+function HistoryDetail({
+  editable,
+  onEdit,
+  session,
+}: {
+  editable: boolean
+  onEdit?: () => void
+  session: WorkoutSession
+}) {
   return (
     <div className="history-detail">
       {session.exercises.map((exercise) => {
@@ -286,6 +394,12 @@ function HistoryDetail({ session }: { session: WorkoutSession }) {
         )
       })}
       {session.sessionNotes ? <p className="history-note">{session.sessionNotes}</p> : null}
+      {editable && onEdit ? (
+        <button className="secondary-button full-width edit-history-button" onClick={onEdit} type="button">
+          <Pencil aria-hidden="true" size={15} />
+          Edit workout
+        </button>
+      ) : null}
     </div>
   )
 }
@@ -384,6 +498,15 @@ function formatHistoryDate(session: WorkoutSession): string {
     day: 'numeric',
     year: 'numeric',
   }).format(new Date(session.completedAt ?? session.startedAt))
+}
+
+function readFile(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result ?? ''))
+    reader.onerror = () => reject(reader.error)
+    reader.readAsText(file)
+  })
 }
 
 function formatPointDate(value: string): string {

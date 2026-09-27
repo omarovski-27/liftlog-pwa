@@ -7,7 +7,8 @@ import type {
   ProgramVersionReason,
 } from '../types/storage'
 import { getExerciseMetric } from '../lib/setMetrics'
-import { hasLoggedSetData } from '../lib/sessions'
+import { createEmptySet, hasLoggedSetData } from '../lib/sessions'
+import { getExercisePrescription } from '../lib/programMetrics'
 import { ProgramDraftError, validateProgramDraft } from '../lib/programBuilder'
 import { readRememberedSessions } from '../lib/sessionRecovery'
 
@@ -98,6 +99,27 @@ export class LiftLogDatabase extends Dexie {
         })
       })
     })
+    this.version(7).stores({}).upgrade(async (transaction) => {
+      const alternatives = await transaction
+        .table<ExerciseAlternative, string>('alternatives')
+        .toArray()
+      const groups = new Map<string, ExerciseAlternative[]>()
+      alternatives.forEach((alternative) => {
+        const key = `${alternative.programId}:${alternative.templateExerciseId}`
+        groups.set(key, [...(groups.get(key) ?? []), alternative])
+      })
+      for (const group of groups.values()) {
+        const preferred = group
+          .slice()
+          .sort((a, b) => Date.parse(b.lastUsedAt) - Date.parse(a.lastUsedAt))[0]
+        await transaction.table<ExerciseAlternative, string>('alternatives').bulkPut(
+          group.map((alternative) => ({
+            ...alternative,
+            useByDefault: alternative.id === preferred.id,
+          })),
+        )
+      }
+    })
   }
 }
 
@@ -161,8 +183,8 @@ export async function deleteSession(sessionId: string, expectedUpdatedAt?: strin
   })
 }
 
-export async function saveAlternative(alternative: ExerciseAlternative): Promise<void> {
-  await liftLogDb.alternatives.put(alternative)
+export async function saveAlternatives(alternatives: ExerciseAlternative[]): Promise<void> {
+  if (alternatives.length > 0) await liftLogDb.alternatives.bulkPut(alternatives)
 }
 
 export async function getActiveProgramId(): Promise<string | undefined> {
@@ -194,7 +216,7 @@ export async function loadProgramLibrary(): Promise<ProgramVersion[]> {
 }
 
 export async function ensureProgramVersion(program: TrainingProgram): Promise<ProgramVersion> {
-  return liftLogDb.transaction('rw', liftLogDb.programVersions, async () => {
+  return liftLogDb.transaction('rw', [liftLogDb.programVersions, liftLogDb.sessions], async () => {
     const versions = await liftLogDb.programVersions
       .where('programId')
       .equals(program.id)
@@ -209,7 +231,6 @@ export async function ensureProgramVersion(program: TrainingProgram): Promise<Pr
       const incomingRevision = program.seedRevision ?? 1
       const storedRevision = latest.program.seedRevision ?? 1
       if (
-        latest.reason === 'seed' &&
         latest.program.status === 'seed' &&
         incomingRevision > storedRevision
       ) {
@@ -221,9 +242,13 @@ export async function ensureProgramVersion(program: TrainingProgram): Promise<Pr
           reason: 'seed',
           basedOnVersion: latest.version,
           label: `Source program revision ${incomingRevision}`,
-          program,
+          program: {
+            ...program,
+            currentWeek: Math.min(latest.program.currentWeek, program.durationWeeks),
+          },
         }
         await liftLogDb.programVersions.add(updatedSeed)
+        await repairActiveSeedSessions(uniqueVersions, updatedSeed)
         return updatedSeed
       }
       return latest
@@ -241,6 +266,101 @@ export async function ensureProgramVersion(program: TrainingProgram): Promise<Pr
     await liftLogDb.programVersions.add(seedVersion)
     return seedVersion
   })
+}
+
+async function repairActiveSeedSessions(
+  existingVersions: ProgramVersion[],
+  updatedSeed: ProgramVersion,
+): Promise<void> {
+  const versionsByNumber = new Map(
+    existingVersions
+      .filter((version) => version.programId === updatedSeed.programId)
+      .map((version) => [version.version, version]),
+  )
+  const activeSessions = (await liftLogDb.sessions.where('status').equals('active').toArray())
+    .filter((session) => session.programId === updatedSeed.programId)
+
+  for (const session of activeSessions) {
+    const sourceVersion = versionsByNumber.get(session.programVersion)
+    if (
+      !sourceVersion ||
+      sourceVersion.program.status !== 'seed' ||
+      (sourceVersion.program.seedRevision ?? 1) >= (updatedSeed.program.seedRevision ?? 1)
+    ) {
+      continue
+    }
+    const sourceWorkout = sourceVersion.program.workouts.find(
+      (workout) => workout.id === session.workoutTemplateId,
+    )
+    const updatedWorkout = updatedSeed.program.workouts.find(
+      (workout) => workout.id === session.workoutTemplateId,
+    )
+    if (!sourceWorkout || !updatedWorkout) continue
+
+    const repairedExercises = session.exercises.map((exercise) => {
+      const sourceTemplate = sourceWorkout.exercises.find(
+        (template) => template.id === exercise.templateExerciseId,
+      )
+      const updatedTemplate = updatedWorkout.exercises.find(
+        (template) => template.id === exercise.templateExerciseId,
+      )
+      if (!sourceTemplate || !updatedTemplate) return exercise
+
+      const sourcePrescription = getExercisePrescription(sourceTemplate, session.weekNumber)
+      const updatedPrescription = getExercisePrescription(updatedTemplate, session.weekNumber)
+      const targetWasUnchanged =
+        exercise.prescribedSets === sourcePrescription.sets &&
+        exercise.repTarget === sourcePrescription.reps
+      const prescribedSets = targetWasUnchanged
+        ? updatedPrescription.sets
+        : exercise.prescribedSets
+      const repTarget = targetWasUnchanged
+        ? updatedPrescription.reps
+        : exercise.repTarget
+
+      return {
+        ...exercise,
+        originalName:
+          exercise.originalName === sourceTemplate.name
+            ? updatedTemplate.name
+            : exercise.originalName,
+        prescribedSets,
+        basePrescribedSets: updatedTemplate.sets,
+        repTarget,
+        baseRepTarget: updatedTemplate.reps,
+        prescriptionAdjusted:
+          prescribedSets !== updatedTemplate.sets || repTarget !== updatedTemplate.reps,
+        sets: targetWasUnchanged
+          ? resizeActiveSessionSets(exercise.sets, prescribedSets)
+          : exercise.sets,
+      }
+    })
+    const updatedAt = new Date(
+      Math.max(Date.now(), Date.parse(session.updatedAt) + 1),
+    ).toISOString()
+    await liftLogDb.sessions.put({
+      ...session,
+      programVersion: updatedSeed.version,
+      updatedAt,
+      exercises: repairedExercises,
+    })
+  }
+}
+
+function resizeActiveSessionSets(
+  sets: WorkoutSession['exercises'][number]['sets'],
+  count: number,
+): WorkoutSession['exercises'][number]['sets'] {
+  if (count >= sets.length) {
+    return [
+      ...sets.map((set, index) => ({ ...set, number: index + 1 })),
+      ...Array.from({ length: count - sets.length }, (_, index) =>
+        createEmptySet(sets.length + index + 1),
+      ),
+    ]
+  }
+  if (sets.slice(count).some((set) => set.completed || hasLoggedSetData(set))) return sets
+  return sets.slice(0, count).map((set, index) => ({ ...set, number: index + 1 }))
 }
 
 export async function saveProgramVersion(

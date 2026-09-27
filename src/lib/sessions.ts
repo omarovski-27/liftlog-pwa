@@ -1,5 +1,10 @@
 import type { TrainingProgram, WorkoutTemplate } from '../types/program'
-import type { ExerciseLog, SetLog, WorkoutSession } from '../types/session'
+import type {
+  ExerciseAlternative,
+  ExerciseLog,
+  SetLog,
+  WorkoutSession,
+} from '../types/session'
 import { getExercisePrescription, getProgramCurrentWeek } from './programMetrics'
 import { getExerciseMetric, getSetQuantity, SET_METRICS } from './setMetrics'
 
@@ -13,6 +18,7 @@ export function createWorkoutSession(
   workout: WorkoutTemplate,
   sessions: WorkoutSession[],
   programVersion = 1,
+  alternatives: ExerciseAlternative[] = [],
 ): WorkoutSession {
   const now = new Date().toISOString()
   const completedCount = sessions.filter(
@@ -34,11 +40,16 @@ export function createWorkoutSession(
     sessionNotes: '',
     exercises: workout.exercises.map((exercise) => {
       const prescription = getExercisePrescription(exercise, weekNumber)
+      const preferredAlternative = getPreferredAlternative(
+        alternatives,
+        program.id,
+        exercise.id,
+      )
       return {
         id: makeId('exercise'),
         templateExerciseId: exercise.id,
         originalName: exercise.name,
-        performedName: exercise.name,
+        performedName: preferredAlternative?.name ?? exercise.name,
         kind: exercise.kind,
         metric: getExerciseMetric(exercise),
         pair: exercise.pair ? { ...exercise.pair } : undefined,
@@ -57,6 +68,24 @@ export function createWorkoutSession(
       }
     }),
   }
+}
+
+export function getPreferredAlternative(
+  alternatives: ExerciseAlternative[],
+  programId: string,
+  templateExerciseId: string,
+): ExerciseAlternative | undefined {
+  const matches = alternatives
+    .filter(
+      (alternative) =>
+        alternative.programId === programId &&
+        alternative.templateExerciseId === templateExerciseId,
+    )
+    .sort((a, b) => Date.parse(b.lastUsedAt) - Date.parse(a.lastUsedAt))
+  return matches.find((alternative) => alternative.useByDefault === true) ??
+    (matches.every((alternative) => alternative.useByDefault === undefined)
+      ? matches[0]
+      : undefined)
 }
 
 export function createEmptySet(number: number): SetLog {
@@ -109,17 +138,6 @@ export function getLatestExercisePerformance(
         entry.sets.some((set) => set.completed) &&
         normalizeExerciseName(entry.performedName) === currentName &&
         getExerciseMetric(entry) === getExerciseMetric(currentExercise),
-    )
-    if (exercise) {
-      return { session, exercise }
-    }
-  }
-
-  for (const session of completedSessions) {
-    const exercise = session.exercises.find(
-      (entry) =>
-        entry.templateExerciseId === currentExercise.templateExerciseId &&
-        entry.sets.some((set) => set.completed),
     )
     if (exercise) {
       return { session, exercise }

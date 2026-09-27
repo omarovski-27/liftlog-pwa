@@ -131,6 +131,25 @@ describe('App', () => {
     expect(screen.getByText('56 sessions left. 4 workouts each week.')).toBeInTheDocument()
   })
 
+  it('starts a user-selected workout instead of forcing the suggested sequence', async () => {
+    render(<App />)
+    await screen.findByRole('button', { name: 'Start workout' })
+    fireEvent.click(screen.getByRole('button', { name: 'Select Lower B' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Start workout' }))
+    expect(await screen.findByRole('heading', { name: 'Day 4 - Lower B + Chest Pump + Arms + Core' })).toBeInTheDocument()
+  })
+
+  it('persists a direct correction to the current program week', async () => {
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Set current program week' }))
+    fireEvent.change(screen.getByLabelText('Current week'), { target: { value: '5' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save week' }))
+
+    await waitFor(() => expect(within(screen.getByRole('region', { name: 'Program progress' })).getByText('5 / 14')).toBeInTheDocument())
+    const versions = await liftLogDb.programVersions.where('programId').equals(chestSpecializationProgram.id).toArray()
+    expect(versions.sort((a, b) => b.version - a.version)[0].program.currentWeek).toBe(5)
+  })
+
   it('starts a session, logs a set, and saves every change locally', async () => {
     await startFirstWorkout()
 
@@ -182,6 +201,7 @@ describe('App', () => {
       expect(alternatives[0]).toMatchObject({
         templateExerciseId: 'd1-incline-db-press',
         name: 'Plate-loaded chest press',
+        useByDefault: true,
       })
     })
 
@@ -190,10 +210,27 @@ describe('App', () => {
     )
     expect(
       within(screen.getByRole('dialog', { name: 'Change exercise' })).getByRole('button', {
-        name: 'Plate-loaded chest press',
+        name: 'Plate-loaded chest press (default)',
       }),
     ).toBeInTheDocument()
-  })
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Change exercise' })).getByRole('button', { name: 'Close' }))
+    fireEvent.change(screen.getByLabelText('Plate-loaded chest press set 1 weight'), {
+      target: { value: '45' },
+    })
+    fireEvent.change(screen.getByLabelText('Plate-loaded chest press set 1 reps'), {
+      target: { value: '10' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Finish' }))
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Finish this workout?' })).getByRole('button', { name: 'Finish workout' }))
+    await screen.findByRole('heading', { name: 'History' })
+    fireEvent.click(screen.getByRole('button', { name: 'Train' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Select Upper Heavy' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Start workout' }))
+
+    expect(await screen.findByRole('heading', { name: 'Plate-loaded chest press' })).toBeInTheDocument()
+    expect(screen.getByText(/Last: Plate-loaded chest press \/ 1 logged set/)).toBeInTheDocument()
+    expect(screen.getByText('45 x 10')).toBeInTheDocument()
+  }, 10000)
 
   it('resumes an unfinished session with its logged values after remount', async () => {
     const firstRender = render(<App />)
@@ -262,13 +299,51 @@ describe('App', () => {
     expect(screen.getByText('Upper: Heavy Chest')).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Train' }))
-    fireEvent.click(screen.getByRole('button', { name: /Upper Heavy/ }))
-    fireEvent.click(screen.getByRole('button', { name: 'Start Upper Heavy' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Select Upper Heavy' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Start workout' }))
 
     expect(await screen.findByText('32.5 x 8 @2')).toBeInTheDocument()
-    expect(screen.getByText(/Last: 1 logged set/)).toBeInTheDocument()
+    expect(screen.getByText(/Last: Incline DB press \/ 1 logged set/)).toBeInTheDocument()
     expect(screen.getByText(/Best set: 32.5 x 8 @2/)).toBeInTheDocument()
   }, 10000)
+
+  it('edits the weights and reps in a completed workout', async () => {
+    const version = await ensureProgramVersion(chestSpecializationProgram)
+    const session = createWorkoutSession(
+      chestSpecializationProgram,
+      chestSpecializationProgram.workouts[0],
+      [],
+      version.version,
+    )
+    session.status = 'completed'
+    session.completedAt = session.updatedAt
+    session.exercises[1].sets[0] = {
+      ...session.exercises[1].sets[0],
+      weightKg: 30,
+      reps: 8,
+      completed: true,
+    }
+    await liftLogDb.sessions.add(session)
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'History' }))
+    fireEvent.click(screen.getByRole('button', { name: /Upper: Heavy Chest/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Edit workout' }))
+    fireEvent.change(await screen.findByLabelText('Incline DB press set 1 weight'), {
+      target: { value: '32.5' },
+    })
+    fireEvent.change(screen.getByLabelText('Incline DB press set 1 reps'), {
+      target: { value: '9' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Save workout changes?' })).getByRole('button', { name: 'Save changes' }))
+
+    await screen.findByRole('heading', { name: 'History' })
+    expect((await liftLogDb.sessions.get(session.id))?.exercises[1].sets[0]).toMatchObject({
+      weightKg: 32.5,
+      reps: 9,
+      completed: true,
+    })
+  })
 
   it('shows exercise progression across completed sessions', async () => {
     const version = await ensureProgramVersion(chestSpecializationProgram)

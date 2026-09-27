@@ -13,6 +13,40 @@ import { chestSpecializationProgram } from './chestSpecializationProgram'
 import { createWorkoutSession } from '../lib/sessions'
 
 describe('program seed revisions', () => {
+  it('promotes the most recently remembered legacy alternative to the default', async () => {
+    const name = `liftlog-alternative-upgrade-test-${crypto.randomUUID()}`
+    const old = new Dexie(name)
+    old.version(6).stores({ sessions: 'id, status', programVersions: 'id, programId', alternatives: 'id', settings: 'id' })
+    await old.table('alternatives').bulkAdd([
+      {
+        id: 'older-alternative',
+        programId: chestSpecializationProgram.id,
+        templateExerciseId: 'd1-incline-db-press',
+        name: 'Machine press',
+        createdAt: '2026-09-01T10:00:00.000Z',
+        lastUsedAt: '2026-09-01T10:00:00.000Z',
+        timesUsed: 1,
+      },
+      {
+        id: 'newer-alternative',
+        programId: chestSpecializationProgram.id,
+        templateExerciseId: 'd1-incline-db-press',
+        name: 'Plate-loaded press',
+        createdAt: '2026-09-08T10:00:00.000Z',
+        lastUsedAt: '2026-09-08T10:00:00.000Z',
+        timesUsed: 1,
+      },
+    ])
+    old.close()
+
+    const upgraded = new LiftLogDatabase(name)
+    try {
+      const alternatives = await upgraded.alternatives.toArray()
+      expect(alternatives.find((item) => item.id === 'newer-alternative')?.useByDefault).toBe(true)
+      expect(alternatives.find((item) => item.id === 'older-alternative')?.useByDefault).toBe(false)
+    } finally { await upgraded.delete() }
+  })
+
   it('upgrades existing timed and paired logs without changing entered values', async () => {
     const name = `liftlog-upgrade-test-${crypto.randomUUID()}`
     const old = new Dexie(name)
@@ -131,5 +165,88 @@ describe('program seed revisions', () => {
     })
     expect(versions).toHaveLength(2)
     expect(versions[1].program.workouts[0].exercises[2].weekOverrides).toBeUndefined()
+  })
+
+  it('repairs an old progress-edited seed without losing its corrected week', async () => {
+    const oldSeed = structuredClone(chestSpecializationProgram)
+    oldSeed.seedRevision = 2
+    oldSeed.workouts[0].exercises[2].weekOverrides = [
+      { startWeek: 1, endWeek: 2, sets: 2 },
+    ]
+
+    const original = await ensureProgramVersion(oldSeed)
+    await saveProgramVersion(
+      { ...oldSeed, currentWeek: 5 },
+      'edit',
+      { basedOnVersion: original.version, label: 'Progress set to week 5' },
+    )
+    const repaired = await ensureProgramVersion(chestSpecializationProgram)
+
+    expect(repaired).toMatchObject({
+      version: 3,
+      basedOnVersion: 2,
+      label: 'Source program revision 3',
+    })
+    expect(repaired.program.currentWeek).toBe(5)
+    expect(repaired.program.workouts[0].exercises[2].sets).toBe(3)
+    expect(repaired.program.workouts[0].exercises[2].weekOverrides).toBeUndefined()
+  })
+
+  it('repairs an unfinished workout from an old seed without losing entered sets', async () => {
+    const oldSeed = structuredClone(chestSpecializationProgram)
+    oldSeed.seedRevision = 2
+    oldSeed.workouts[0].exercises[2].weekOverrides = [
+      { startWeek: 1, endWeek: 2, sets: 2 },
+    ]
+    const oldVersion = await ensureProgramVersion(oldSeed)
+    const active = createWorkoutSession(
+      oldSeed,
+      oldSeed.workouts[0],
+      [],
+      oldVersion.version,
+    )
+    active.exercises[2].sets[0].weightKg = 30
+    active.exercises[2].sets[0].reps = 10
+    active.exercises[2].sets[0].completed = true
+    await saveSession(active)
+
+    const updatedVersion = await ensureProgramVersion(chestSpecializationProgram)
+    const repaired = await liftLogDb.sessions.get(active.id)
+    const flatPress = repaired?.exercises[2]
+
+    expect(repaired?.programVersion).toBe(updatedVersion.version)
+    expect(flatPress?.prescribedSets).toBe(3)
+    expect(flatPress?.sets).toHaveLength(3)
+    expect(flatPress?.sets[0]).toMatchObject({ weightKg: 30, reps: 10, completed: true })
+    expect(flatPress?.sets[2]).toMatchObject({ number: 3, completed: false })
+  })
+
+  it('keeps a manually edited active target while moving it to the repaired seed', async () => {
+    const oldSeed = structuredClone(chestSpecializationProgram)
+    oldSeed.seedRevision = 2
+    oldSeed.workouts[0].exercises[2].weekOverrides = [
+      { startWeek: 1, endWeek: 2, sets: 2 },
+    ]
+    const oldVersion = await ensureProgramVersion(oldSeed)
+    const active = createWorkoutSession(
+      oldSeed,
+      oldSeed.workouts[0],
+      [],
+      oldVersion.version,
+    )
+    active.exercises[2].prescribedSets = 1
+    active.exercises[2].sets = active.exercises[2].sets.slice(0, 1)
+    active.exercises[2].prescriptionAdjusted = true
+    await saveSession(active)
+
+    const updatedVersion = await ensureProgramVersion(chestSpecializationProgram)
+    const repaired = await liftLogDb.sessions.get(active.id)
+    const flatPress = repaired?.exercises[2]
+
+    expect(repaired?.programVersion).toBe(updatedVersion.version)
+    expect(flatPress?.prescribedSets).toBe(1)
+    expect(flatPress?.sets).toHaveLength(1)
+    expect(flatPress?.basePrescribedSets).toBe(3)
+    expect(flatPress?.prescriptionAdjusted).toBe(true)
   })
 })

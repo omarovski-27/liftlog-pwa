@@ -22,7 +22,7 @@ import {
   loadProgramLibrary,
   loadProgramRecords,
   recoverRememberedSessions,
-  saveAlternative,
+  saveAlternatives,
   saveProgramVersion,
   saveSession,
   SessionConflictError,
@@ -40,8 +40,9 @@ import {
   finalizeSessionEntries,
   getActiveSession,
   getNextWorkout,
+  getProgramSessionCount,
 } from './lib/sessions'
-import { getRemainingProgramSessions } from './lib/programMetrics'
+import { getProgramCurrentWeek } from './lib/programMetrics'
 import {
   forgetRememberedSession,
   rememberSession,
@@ -103,7 +104,7 @@ function App() {
   const install = usePwaInstall()
 
   const nextWorkout = useMemo(() => getNextWorkout(program, sessions), [program, sessions])
-  const openSession = sessions.find((session) => session.id === openSessionId)
+  const openSession = allSessions.find((session) => session.id === openSessionId)
 
   useEffect(() => {
     let cancelled = false
@@ -259,13 +260,12 @@ function App() {
       setOpenSessionId(existingActive.id)
       return
     }
-    if (getRemainingProgramSessions(program, sessions.filter((session) => session.programId === program.id && session.status === 'completed').length) === 0) return
-
     const session = createWorkoutSession(
       program,
       workout,
       sessions,
       currentVersion.version,
+      alternatives,
     )
     upsertSession(session)
     setOpenSessionId(session.id)
@@ -283,26 +283,31 @@ function App() {
   async function finishOpenSession() {
     if (!openSession || sessionBusy) return
     setSessionBusy(true)
+    const editingCompleted = openSession.status === 'completed'
     const completedAt = nextSessionTimestamp(openSession)
     const completedSession: WorkoutSession = {
       ...finalizeSessionEntries(openSession),
       status: 'completed',
-      completedAt,
+      completedAt: editingCompleted ? openSession.completedAt ?? completedAt : completedAt,
       updatedAt: completedAt,
     }
     const nextSessions = sessions.map((session) =>
       session.id === completedSession.id ? completedSession : session,
     )
-    const personalRecords = getSessionPersonalRecords(completedSession, sessions)
+    const personalRecords = editingCompleted
+      ? []
+      : getSessionPersonalRecords(completedSession, sessions)
 
     try {
       await persistSession(completedSession)
       updateSessionState(completedSession)
-      setSelectedWorkoutId(getNextWorkout(program, nextSessions).id)
+      if (!editingCompleted) setSelectedWorkoutId(getNextWorkout(program, nextSessions).id)
       setOpenSessionId(null)
       setActiveTab('history')
       setNotice(
-        personalRecords.length === 0
+        editingCompleted
+          ? 'Workout changes saved'
+          : personalRecords.length === 0
           ? 'Workout saved'
           : `Workout saved. ${personalRecords.length} exercise PR${personalRecords.length === 1 ? '' : 's'}`,
       )
@@ -347,36 +352,90 @@ function App() {
       ),
     })
 
-    if (!remember || normalizeName(name) === normalizeName(targetExercise.originalName)) {
+    if (!remember) return
+
+    const now = new Date().toISOString()
+    const slotAlternatives = alternatives.filter(
+      (alternative) =>
+        alternative.programId === openSession.programId &&
+        alternative.templateExerciseId === targetExercise.templateExerciseId,
+    )
+    const resetAlternatives = slotAlternatives.map((alternative) => ({
+      ...alternative,
+      useByDefault: false,
+    }))
+    if (normalizeName(name) === normalizeName(targetExercise.originalName)) {
+      setAlternatives((current) => current.map((alternative) =>
+        resetAlternatives.find((updated) => updated.id === alternative.id) ?? alternative,
+      ))
+      trackBackgroundWrite(
+        saveAlternatives(resetAlternatives),
+        'The exercise preference could not be saved.',
+      )
       return
     }
 
-    const now = new Date().toISOString()
     const existing = alternatives.find(
       (alternative) =>
-        alternative.programId === program.id &&
+        alternative.programId === openSession.programId &&
         alternative.templateExerciseId === targetExercise.templateExerciseId &&
         normalizeName(alternative.name) === normalizeName(name),
     )
     const alternative: ExerciseAlternative = existing
-      ? { ...existing, name, lastUsedAt: now, timesUsed: existing.timesUsed + 1 }
+      ? {
+          ...existing,
+          name,
+          lastUsedAt: now,
+          timesUsed: existing.timesUsed + 1,
+          useByDefault: true,
+        }
       : {
           id: makeAlternativeId(),
-          programId: program.id,
+          programId: openSession.programId,
           templateExerciseId: targetExercise.templateExerciseId,
           name,
           createdAt: now,
           lastUsedAt: now,
           timesUsed: 1,
+          useByDefault: true,
         }
+    const preferenceUpdates = [
+      ...resetAlternatives.filter((item) => item.id !== alternative.id),
+      alternative,
+    ]
 
     setAlternatives((current) => {
-      const exists = current.some((item) => item.id === alternative.id)
-      return exists
-        ? current.map((item) => (item.id === alternative.id ? alternative : item))
-        : [...current, alternative]
+      const updates = new Map(preferenceUpdates.map((item) => [item.id, item]))
+      const next = current.map((item) => updates.get(item.id) ?? item)
+      return next.some((item) => item.id === alternative.id) ? next : [...next, alternative]
     })
-    trackBackgroundWrite(saveAlternative(alternative), 'The alternative could not be remembered.')
+    trackBackgroundWrite(
+      saveAlternatives(preferenceUpdates),
+      'The exercise preference could not be saved.',
+    )
+  }
+
+  async function setCurrentProgramWeek(weekNumber: number) {
+    if (getActiveSession(sessions)) {
+      throw new Error('Finish or discard the active workout before changing program progress.')
+    }
+    const completedCount = getProgramSessionCount(program.id, sessions)
+    const completedWeeks = Math.floor(completedCount / program.liftingDaysPerWeek)
+    const startingWeek = Math.max(1, Math.min(program.durationWeeks, weekNumber - completedWeeks))
+    const nextProgram = { ...program, currentWeek: startingWeek }
+    if (getProgramCurrentWeek(nextProgram, completedCount) !== weekNumber) {
+      throw new Error('That week is earlier than the workouts already logged in LiftLog.')
+    }
+    const snapshot = await changeProgramWorkspace(async () => {
+      await saveProgramVersion(nextProgram, 'edit', {
+        basedOnVersion: currentVersion?.version,
+        label: `Progress set to week ${weekNumber}`,
+      })
+      return nextProgram.id
+    })
+    applyWorkspace(snapshot, false)
+    setStorageError(null)
+    setNotice(`Program progress set to week ${weekNumber}`)
   }
 
   async function importBackup(backup: LiftLogBackup, mode: BackupRestoreMode) {
@@ -604,6 +663,7 @@ function App() {
             onResumeWorkout={resumeWorkout}
             onRepeatProgram={() => duplicateProgram(currentVersion)}
             onSelectWorkout={setSelectedWorkoutId}
+            onSetCurrentWeek={setCurrentProgramWeek}
             onStartWorkout={startWorkout}
             program={program}
             selectedWorkoutId={selectedWorkoutId}
@@ -611,7 +671,12 @@ function App() {
           />
         ) : null}
         {activeTab === 'history' ? (
-          <HistoryView program={program} sessions={allSessions} />
+          <HistoryView
+            onEditSession={(session) => setOpenSessionId(session.id)}
+            onMergeBackup={(backup) => importBackup(backup, 'merge')}
+            program={program}
+            sessions={allSessions}
+          />
         ) : null}
         {activeTab === 'program' ? (
           <ProgramView

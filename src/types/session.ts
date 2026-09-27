@@ -24,6 +24,7 @@ export interface ExerciseLog {
   repTarget: string
   baseRepTarget?: string
   prescriptionAdjusted?: boolean
+  addedDuringSession?: boolean
   targetRir?: string
   rest: string
   prescriptionNotes?: string
@@ -55,4 +56,5 @@ export interface ExerciseAlternative {
   createdAt: string
   lastUsedAt: string
   timesUsed: number
+  useByDefault?: boolean
 }

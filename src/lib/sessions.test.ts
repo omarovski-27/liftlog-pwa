@@ -32,6 +32,32 @@ describe('workout sessions', () => {
     })
   })
 
+  it('uses the remembered default alternative for a new workout', () => {
+    const alternative = {
+      id: 'alternative-machine-press',
+      programId: chestSpecializationProgram.id,
+      templateExerciseId: 'd1-incline-db-press',
+      name: 'Plate-loaded chest press',
+      createdAt: '2026-09-20T10:00:00.000Z',
+      lastUsedAt: '2026-09-20T10:00:00.000Z',
+      timesUsed: 1,
+      useByDefault: true,
+    }
+
+    const session = createWorkoutSession(
+      chestSpecializationProgram,
+      chestSpecializationProgram.workouts[0],
+      [],
+      1,
+      [alternative],
+    )
+
+    expect(session.exercises[1]).toMatchObject({
+      originalName: 'Incline DB press',
+      performedName: 'Plate-loaded chest press',
+    })
+  })
+
   it('uses the base prescription after a week override ends', () => {
     const program = structuredClone(chestSpecializationProgram)
     program.workouts[0].exercises[2].weekOverrides = [
@@ -218,6 +244,24 @@ describe('workout sessions', () => {
 
     expect(getLatestExercisePerformance([actual, substitute], current, current.exercises[1])?.session.id).toBe(actual.id)
     expect(copyPreviousSets(current.exercises[1], substitute.exercises[1])).toEqual(current.exercises[1])
+  })
+
+  it('does not show original-exercise numbers for a new substitution in the same slot', () => {
+    const previous = createWorkoutSession(chestSpecializationProgram, chestSpecializationProgram.workouts[0], [])
+    previous.status = 'completed'
+    previous.completedAt = '2026-09-01T10:00:00.000Z'
+    previous.exercises[1].sets[0] = {
+      ...previous.exercises[1].sets[0],
+      weightKg: 32.5,
+      reps: 10,
+      completed: true,
+    }
+    const current = createWorkoutSession(chestSpecializationProgram, chestSpecializationProgram.workouts[0], [previous])
+    current.exercises[1].performedName = 'Plate-loaded chest press'
+
+    expect(
+      getLatestExercisePerformance([previous], current, current.exercises[1]),
+    ).toBeUndefined()
   })
 
   it('calculates volume from completed, fully entered sets only', () => {

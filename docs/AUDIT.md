@@ -1,6 +1,6 @@
 # LiftLog Audit
 
-Audit completed for the 0.10.0 release.
+Audit completed for the 0.11.0 release.
 
 ## Scope
 
@@ -9,6 +9,15 @@ Audit completed for the 0.10.0 release.
 - Verify custom program editing, immutable versions, import/export, backup restore, offline shell behavior, and 320px usability.
 
 ## User-Reported Issues Covered
+
+- Remembered alternatives now become the default for that prescription slot in later sessions. Existing saved alternatives migrate with the most recently used choice as the default.
+- Previous and best values match the performed exercise name exactly; a new substitute never inherits numbers from the original movement.
+- Any workout can be selected and started from the main action card, including after the nominal program end.
+- Program week can be corrected directly without deleting or fabricating workout history.
+- Completed sessions can be reopened to correct exercise names, sets, weights, reps, RIR, and notes.
+- Exercises can be added to or removed from an active or reopened workout, and those additions survive backup export/import.
+- History now exposes previous-data backup import directly instead of hiding recovery under Program settings.
+- Old bundled prescriptions upgrade even when their newest copy was imported or only edited to correct program progress. Unfinished workouts from that old seed gain the corrected source rows without losing entered values or manual target changes.
 
 - History now receives all saved sessions on the device, not only sessions for the currently active program. Train and next-workout logic still use the active program's sessions.
 - The logger now has an exercise-level **Edit target** action for planned sets, reps/target, RIR, and rest. Adding/removing set rows also keeps the current-session planned set count in sync.
@@ -32,7 +41,7 @@ Audit completed for the 0.10.0 release.
 - Typecheck: `npx tsc -b --pretty false`
 - Lint: `npm run lint`
 - Tests: `npm test`
-- Latest full test result: 18 files passed, 128 tests passed.
+- Latest full test result: 18 files passed, 143 tests passed.
 - Production build: `npm run build`
 
 ## Notes

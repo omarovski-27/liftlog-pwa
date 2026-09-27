@@ -1,4 +1,5 @@
-import { ChevronDown, Play, RotateCcw } from 'lucide-react'
+import { ChevronDown, Pencil, Play, RotateCcw, X } from 'lucide-react'
+import { useState } from 'react'
 import type { TrainingProgram, WorkoutTemplate } from '../types/program'
 import type { WorkoutSession } from '../types/session'
 import {
@@ -12,6 +13,7 @@ import {
   getRemainingProgramSessions,
   getWorkingSetCount,
 } from '../lib/programMetrics'
+import { ModalFrame } from './ModalFrame'
 
 interface TrainViewProps {
   program: TrainingProgram
@@ -22,6 +24,7 @@ interface TrainViewProps {
   onStartWorkout: (workout: WorkoutTemplate) => void
   onResumeWorkout: (session: WorkoutSession) => void
   onRepeatProgram?: () => void
+  onSetCurrentWeek?: (weekNumber: number) => Promise<void>
 }
 
 export function TrainView({
@@ -33,7 +36,9 @@ export function TrainView({
   onStartWorkout,
   onResumeWorkout,
   onRepeatProgram,
+  onSetCurrentWeek,
 }: TrainViewProps) {
+  const [weekDialogOpen, setWeekDialogOpen] = useState(false)
   const activeSession = getActiveSession(sessions)
   const completedCount = getProgramSessionCount(program.id, sessions)
   const sessionTarget = getRemainingProgramSessions(program)
@@ -48,7 +53,7 @@ export function TrainView({
   const actionWorkout = activeSession
     ? program.workouts.find((workout) => workout.id === activeSession.workoutTemplateId) ??
       nextWorkout
-    : nextWorkout
+    : selectedWorkout
 
   return (
     <div className="page-view train-view">
@@ -61,12 +66,23 @@ export function TrainView({
         <div className="progress-heading">
           <div>
             <span>Week</span>
-            <strong>
-              {currentWeek} / {program.durationWeeks}
-            </strong>
+            <span className="progress-value-with-action">
+              <strong>{currentWeek} / {program.durationWeeks}</strong>
+              {onSetCurrentWeek && !activeSession ? (
+                <button
+                  aria-label="Set current program week"
+                  className="plain-icon-button compact-icon-button"
+                  onClick={() => setWeekDialogOpen(true)}
+                  title="Set current week"
+                  type="button"
+                >
+                  <Pencil aria-hidden="true" size={14} />
+                </button>
+              ) : null}
+            </span>
           </div>
           <div className="progress-number">
-            <span>Completed</span>
+            <span>Logged</span>
             <strong>
               {Math.min(completedCount, sessionTarget)} / {sessionTarget}
             </strong>
@@ -80,18 +96,28 @@ export function TrainView({
         </p>
       </section>
 
-      {programComplete ? (
-        <section className="next-workout" aria-labelledby="complete-heading">
-          <span className="section-label">{program.durationWeeks} weeks</span>
-          <h1 id="complete-heading">Program complete</h1>
-          {onRepeatProgram ? <button className="primary-button" onClick={onRepeatProgram} type="button"><RotateCcw aria-hidden="true" size={17} />Repeat program</button> : null}
-        </section>
-      ) : <section className="next-workout" aria-labelledby="next-workout-heading">
-        <span className="section-label">{activeSession ? 'In progress' : 'Next workout'}</span>
+      <section className="next-workout" aria-labelledby="next-workout-heading">
+        <span className="section-label">{activeSession ? 'In progress' : actionWorkout.id === nextWorkout.id ? 'Suggested workout' : 'Selected workout'}</span>
         <h1 id="next-workout-heading">{actionWorkout.shortTitle}</h1>
         <p>
           {actionWorkout.scheduledDay} / {getWorkingSetCount(actionWorkout, currentWeek)} working sets
         </p>
+        {!activeSession ? (
+          <div className="workout-chooser" aria-label="Choose workout">
+            {program.workouts.map((workout) => (
+              <button
+                aria-label={`Select ${workout.shortTitle}`}
+                aria-pressed={workout.id === selectedWorkout.id}
+                key={workout.id}
+                onClick={() => onSelectWorkout(workout.id)}
+                title={workout.shortTitle}
+                type="button"
+              >
+                Day {workout.dayNumber}
+              </button>
+            ))}
+          </div>
+        ) : null}
         <button
           className="primary-button"
           onClick={() =>
@@ -102,7 +128,13 @@ export function TrainView({
           <Play aria-hidden="true" fill="currentColor" size={17} />
           {activeSession ? 'Resume workout' : 'Start workout'}
         </button>
-      </section>}
+        {programComplete && onRepeatProgram && !activeSession ? (
+          <button className="repeat-program-button" onClick={onRepeatProgram} type="button">
+            <RotateCcw aria-hidden="true" size={15} />
+            Start a new program cycle
+          </button>
+        ) : null}
+      </section>
 
       <section className="week-section" aria-labelledby="week-heading">
         <div className="section-title-row">
@@ -142,7 +174,6 @@ export function TrainView({
                 {selected ? (
                   <WorkoutOutline
                     activeSession={activeSession}
-                    complete={programComplete}
                     weekNumber={currentWeek}
                     workout={workout}
                     onResumeWorkout={onResumeWorkout}
@@ -154,6 +185,19 @@ export function TrainView({
           })}
         </div>
       </section>
+
+      {weekDialogOpen && onSetCurrentWeek ? (
+        <ProgramWeekDialog
+          currentWeek={currentWeek}
+          minimumWeek={Math.min(
+            program.durationWeeks,
+            Math.floor(completedCount / program.liftingDaysPerWeek) + 1,
+          )}
+          onClose={() => setWeekDialogOpen(false)}
+          onSave={onSetCurrentWeek}
+          totalWeeks={program.durationWeeks}
+        />
+      ) : null}
     </div>
   )
 }
@@ -161,7 +205,6 @@ export function TrainView({
 interface WorkoutOutlineProps {
   workout: WorkoutTemplate
   activeSession: WorkoutSession | undefined
-  complete: boolean
   weekNumber: number
   onStartWorkout: (workout: WorkoutTemplate) => void
   onResumeWorkout: (session: WorkoutSession) => void
@@ -170,7 +213,6 @@ interface WorkoutOutlineProps {
 function WorkoutOutline({
   workout,
   activeSession,
-  complete,
   weekNumber,
   onStartWorkout,
   onResumeWorkout,
@@ -196,7 +238,7 @@ function WorkoutOutline({
           )
         })}
       </ol>
-      {complete ? null : <button
+      <button
         className="secondary-button full-width"
         onClick={() =>
           activeSession ? onResumeWorkout(activeSession) : onStartWorkout(workout)
@@ -204,8 +246,80 @@ function WorkoutOutline({
         type="button"
       >
         {activeSession ? 'Resume current workout' : `Start ${workout.shortTitle}`}
-      </button>}
+      </button>
     </div>
+  )
+}
+
+function ProgramWeekDialog({
+  currentWeek,
+  minimumWeek,
+  onClose,
+  onSave,
+  totalWeeks,
+}: {
+  currentWeek: number
+  minimumWeek: number
+  onClose: () => void
+  onSave: (weekNumber: number) => Promise<void>
+  totalWeeks: number
+}) {
+  const [week, setWeek] = useState(String(currentWeek))
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function save() {
+    const value = Number(week)
+    if (!Number.isSafeInteger(value) || value < minimumWeek || value > totalWeeks) {
+      setError(`Enter week ${minimumWeek} to ${totalWeeks}.`)
+      return
+    }
+    setBusy(true)
+    setError(null)
+    try {
+      await onSave(value)
+      onClose()
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Program progress could not be saved.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <ModalFrame labelledBy="program-week-heading" bottom busy={busy} onClose={onClose}>
+      <div className="sheet-heading">
+        <div>
+          <span className="section-label">Program progress</span>
+          <h2 id="program-week-heading">Set current week</h2>
+        </div>
+        <button className="plain-icon-button" disabled={busy} onClick={onClose} title="Close" type="button">
+          <X aria-hidden="true" size={20} />
+          <span className="sr-only">Close</span>
+        </button>
+      </div>
+      <label className="builder-field" htmlFor="current-program-week">
+        <span>Current week</span>
+        <input
+          className="text-input"
+          id="current-program-week"
+          inputMode="numeric"
+          max={totalWeeks}
+          min={minimumWeek}
+          onChange={(event) => setWeek(event.target.value)}
+          type="number"
+          value={week}
+        />
+      </label>
+      <p className="sheet-note">Logged workouts stay intact. This only corrects where you are in the program.</p>
+      {error ? <p className="inline-error" role="alert">{error}</p> : null}
+      <div className="sheet-actions">
+        <button className="secondary-button" disabled={busy} onClick={onClose} type="button">Cancel</button>
+        <button className="primary-button" disabled={busy} onClick={() => void save()} type="button">
+          {busy ? 'Saving...' : 'Save week'}
+        </button>
+      </div>
+    </ModalFrame>
   )
 }
 

@@ -10,14 +10,16 @@ A phone-first progressive overload log for structured lifting programs. The app 
 - Local program JSON import from pasted AI output or a selected file, with validation and review in the visual builder.
 - Clean program JSON export plus a copyable prompt for ChatGPT, Claude, or another external AI.
 - Live workout, exercise, and working-set totals with inline validation.
-- A configurable starting week for accurate mid-program progress and remaining-session counts.
+- A direct current-week control for correcting mid-program progress without changing logged workouts.
 - Four seeded workout templates that match every exercise, set count, and rep target in the PDF tables. The PDF's week 1-2 entry-dose guidance remains visible without guessing which exercise should lose a set.
 - Active workout logging for weight, reps, RIR, completed sets, extra or removed sets, and notes.
 - Automatic IndexedDB saving and recovery of an unfinished workout after reload.
 - Previous-session values beside each current set, with a copy-last action.
-- Exercise substitution that preserves the prescribed movement and optionally remembers alternatives.
-- Completed workout history with weekly session, set, and training-volume summaries.
-- Per-exercise progress with top sets, estimated one-rep max, prior-session change, and an eight-workout trend chart.
+- Exercise substitution with independent history per performed movement and a persistent default for future sessions.
+- In-session exercise add/remove controls plus editable sets, rep targets, RIR, rest, weights, reps, and notes.
+- Completed workout history with editable past sessions and a prominent previous-backup import flow.
+- Per-exercise progress with top sets, all-time bests, prior-session change, and an eight-workout trend chart.
+- A visible workout chooser that can start any program day instead of forcing sequence order.
 - Personal-record detection when a completed workout improves estimated strength, volume, or reps.
 - Program week, completed-session, remaining-session, phase, progression, and constraint views.
 - Immutable program versions. Each workout records the version it used.
