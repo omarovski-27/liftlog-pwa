@@ -26,6 +26,8 @@ import {
 } from './types'
 import { parseInventory, safeDemoUrl, validateRehabData } from './validation'
 import { exerciseDemonstration } from './defaultLibrary'
+import { ExerciseCard, ExerciseDetails, VideoAction } from './ExerciseCard'
+import { DailyPrograms } from './DailyPrograms'
 import './physio.css'
 
 const groupNames = {
@@ -60,6 +62,8 @@ export function PhysioView({
   const [search, setSearch] = useState('')
   const [group, setGroup] = useState('all')
   const [selected, setSelected] = useState<string[]>([])
+  const [selectedDay, setSelectedDay] = useState(() => new Date(`${localDay()}T12:00:00Z`).getUTCDay())
+  const [browseWeek, setBrowseWeek] = useState(false)
   const [session, setSession] = useState<RehabSession | null>(null)
   const [saveState, setSaveState] = useState<'saved' | 'saving' | 'error'>(
     'saved',
@@ -205,14 +209,15 @@ export function PhysioView({
       setPendingImport(parseInventory(await file.text()))
     })
   }
-  async function begin(manual = false) {
+  async function begin(manual = false, exerciseIds?: string[]) {
     await action(async () => {
-      const started = await startSession(manual ? selected : undefined)
+      const started = await startSession(manual ? exerciseIds ?? selected : undefined)
       setSession(started)
       latestDraft.current = started
       revision.current = started.revision
       setData(await readRehabData())
       setPage('Today')
+      setBrowseWeek(false)
     })
   }
   function updateLog(
@@ -279,7 +284,7 @@ export function PhysioView({
         <span className="section-label">Your rehabilitation log</span>
         <h1>Physio</h1>
         <p>
-          {today} · {timezone}
+          {new Intl.DateTimeFormat('en', { weekday: 'long', day: 'numeric', month: 'long', timeZone: timezone }).format(new Date(`${today}T12:00:00Z`))}
         </p>
       </header>
       <nav className="physio-tabs" aria-label="Physio navigation">
@@ -291,7 +296,7 @@ export function PhysioView({
             disabled={saveState !== 'saved' || Boolean(recovery)}
             onClick={() => setPage(item)}
           >
-            {item}
+            {item === 'Today' ? 'Daily' : item}
           </button>
         ))}
       </nav>
@@ -447,48 +452,20 @@ export function PhysioView({
       ) : null}
       {page === 'Today' && plan ? (
         <>
-          <section className="physio-card">
-            <h2>
-              {session && ['active', 'paused'].includes(session.status)
-                ? 'Your unfinished session'
-                : 'Today’s routine'}
-            </h2>
-            <p>
-              {due.length} configured exercises ·{' '}
-              {session ? `${session.status} session` : 'no automatic catch-up'}
-            </p>
-            {!due.length ? (
-              <p>
-                No approved routine is configured for today. A rest/check-in day
-                is valid. Use Plan to enter your instructions or select
-                exercises for a manual record.
-              </p>
-            ) : (
-              <ul>
-                {due.map((e) => (
-                  <li key={e.id}>
-                    {e.name} · {doseText(e.dose)}
-                  </li>
-                ))}
-              </ul>
-            )}
-            {!session || ['finished', 'abandoned'].includes(session.status) ? (
-              <button
-                className="primary-button"
-                type="button"
-                disabled={
-                  busy ||
-                  !due.length ||
-                  Boolean(session?.finishedAt && day?.localDate === today)
-                }
-                onClick={() => void begin()}
-              >
-                Start today’s routine
-              </button>
-            ) : null}
-          </section>
+          {(!session || !['active', 'paused'].includes(session.status) || browseWeek) ? <DailyPrograms
+            exercises={(duePlan ?? plan).exercises}
+            selectedDay={selectedDay} onSelectDay={setSelectedDay}
+            todayDay={new Date(`${today}T12:00:00Z`).getUTCDay()}
+            todayLabel={today}
+            busy={busy || saveState !== 'saved' || Boolean(recovery)}
+            hasUnfinished={Boolean(unfinishedSession(data))}
+            canLog={!(session?.finishedAt && day?.localDate === today) && Boolean(duePlan)}
+            configuredCount={due.length}
+            onLogDay={(ids, configured) => { void begin(!configured, ids) }}
+            onResume={() => { setBrowseWeek(false); if (session?.status === 'paused') void changeLifecycle('active') }}
+          /> : <div className="physio-session-toolbar"><span className="physio-eyebrow">Your current session</span><button type="button" onClick={() => setBrowseWeek(true)}>Browse daily lists</button></div>}
           {session && day ? (
-            <section className="physio-card">
+            <section className="physio-card physio-session-panel">
               <h2>{day.localDate} · session</h2>
               <p role="status">
                 {saveState === 'saved'
@@ -504,7 +481,7 @@ export function PhysioView({
                 Targets are separate from actual work. Finishing leaves
                 unrecorded exercises unrecorded.
               </p>
-              {day.occurrences.map((occurrence) => {
+              {day.occurrences.map((occurrence, index) => {
                 const log = session.logs.find(
                   (entry) => entry.occurrenceId === occurrence.id,
                 )!
@@ -514,12 +491,9 @@ export function PhysioView({
                   Boolean(recovery) ||
                   ['finished', 'abandoned', 'paused'].includes(session.status)
                 return (
-                  <details className="physio-exercise" key={occurrence.id}>
-                    <summary>
-                      {occurrence.exercise.name}
-                      <span>{log.outcome}</span>
-                    </summary>
-                    <ExerciseInfo exercise={occurrence.exercise} />
+                  <ExerciseCard exercise={occurrence.exercise} index={index} status={log.outcome} key={occurrence.id}>
+                    <details className="physio-log-fields" open={index === 0}>
+                    <summary>Log actual work</summary>
                     <fieldset disabled={locked}>
                       <legend>Actual work</legend>
                       <div className="physio-fields">
@@ -617,7 +591,8 @@ export function PhysioView({
                         />
                       </label>
                     </fieldset>
-                  </details>
+                    </details>
+                  </ExerciseCard>
                 )
               })}
               <div className="physio-actions">
@@ -656,8 +631,8 @@ export function PhysioView({
             </section>
           ) : null}
           {!unfinishedSession(data) ? (
-            <section className="physio-card">
-              <h2>Manual session</h2>
+            <details className="physio-card physio-custom-session">
+              <summary>Build a custom session</summary>
               <p>
                 Choose only exercises you intend to record. This does not
                 confirm a prescription or schedule. One session per day can be
@@ -692,9 +667,9 @@ export function PhysioView({
               >
                 Start selected exercises
               </button>
-            </section>
+            </details>
           ) : null}
-          <CheckInForm
+          <details className="physio-checkin-panel"><summary>Symptom check-in <span>Optional</span></summary><CheckInForm
             sessions={data.rehabSessions.map((item) => ({
               id: item.id,
               date:
@@ -711,7 +686,7 @@ export function PhysioView({
                 setData(await readRehabData())
               })
             }
-          />
+          /></details>
           {data.rehabSessions.some(
             (s) =>
               s.finishedAt &&
@@ -753,7 +728,7 @@ export function PhysioView({
                   Finish the current physio session before editing the plan.
                 </p>
               ) : null}
-              <Coverage plan={plan} />
+              <details className="physio-plan-coverage"><summary>Exercise frequency & coverage</summary><Coverage plan={plan} /></details>
             </>
           ) : (
             <>
@@ -836,10 +811,7 @@ export function PhysioView({
               ))}
             </select>
           </label>
-          <p>
-            {plan.exercises.length} library entries. Organization tags are not a
-            diagnosis. Text works offline; external videos need internet.
-          </p>
+          <p className="physio-library-count">{plan.exercises.length} library entries · tap Watch video for a demonstration</p>
           {plan.exercises
             .filter(
               (e) =>
@@ -847,13 +819,7 @@ export function PhysioView({
                 (group === 'all' || e.group === group),
             )
             .map((e) => (
-              <details className="physio-card" key={e.id}>
-                <summary>
-                  {e.name}
-                  <span>{e.disposition}</span>
-                </summary>
-                <ExerciseInfo exercise={e} />
-              </details>
+              <ExerciseCard exercise={e} key={e.id} />
             ))}
         </>
       ) : null}
@@ -875,54 +841,8 @@ function doseText(dose: Dose) {
     ? `${parts.join(' · ')} · ${dose.repBasis ?? 'rep basis unconfirmed'} · ${dose.side ?? 'side unconfirmed'}`
     : 'Dose not confirmed'
 }
-function ExerciseInfo({ exercise: e }: { exercise: RehabExercise }) {
-  const demo = exerciseDemonstration(e)
-  return (
-    <div className="physio-info">
-      <p>
-        {groupNames[e.group]} · {e.disposition}
-      </p>
-      <p>
-        <strong>Target:</strong> {doseText(e.dose)}
-      </p>
-      <p>
-        Target origin: {e.doseOrigin}. Frequency:{' '}
-        {e.dose.frequencyPerWeek ?? 'not confirmed'}. Variant:{' '}
-        {e.variantConfirmed ? 'user confirmed' : 'awaiting clarification'}.
-      </p>
-      {e.sourceDoseText ? (
-        <p>Original source dose: {e.sourceDoseText}</p>
-      ) : null}
-      {e.sourceInstructions ? (
-        <p>Source notes: {e.sourceInstructions}</p>
-      ) : null}
-      {e.notes ? <p>Your notes: {e.notes}</p> : null}
-      {demo ? (
-        <>
-          <a
-            href={safeDemoUrl(demo.url)}
-            target="_blank"
-            rel="noopener noreferrer"
-            referrerPolicy="no-referrer"
-          >
-            Watch {e.name} video ↗
-          </a>
-          <p>
-            {demo.title} · {demo.provider}
-          </p>
-          <p>
-            {demo.status} — confirm intended variant. {demo.variant}
-          </p>
-          <small>
-            Metadata checked {demo.checkedOn}; {demo.reviewer}. Online only.
-            Captions availability unknown. No autoplay.
-          </small>
-        </>
-      ) : (
-        <p>Demonstration pending. Add a video in Plan.</p>
-      )}
-    </div>
-  )
+function ExerciseInfo({ exercise }: { exercise: RehabExercise }) {
+  return <div className="physio-info"><VideoAction exercise={exercise} /><ExerciseDetails exercise={exercise} /></div>
 }
 function PlanExercise({
   exercise: e,

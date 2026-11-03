@@ -55,7 +55,7 @@ describe('built-in physio library', () => {
     await screen.findByText(/20 library entries/)
     expect(screen.queryByLabelText('Private setup code')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Add exercises' })).not.toBeInTheDocument()
-    fireEvent.click(screen.getByText('Bird dog', { exact: true }))
+    expect(screen.getAllByRole('link', { name: /^Watch .* video ↗$/ })).toHaveLength(20)
     expect(await screen.findByRole('link', { name: 'Watch Bird dog video ↗' })).toHaveAttribute('href', 'https://vimeo.com/455787228')
     expect((await readRehabData()).rehabPlanVersions).toHaveLength(1)
   })
