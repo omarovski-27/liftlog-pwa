@@ -1444,7 +1444,7 @@ button:disabled,
   border-top: 1px solid var(--line);
   bottom: 0;
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   left: 50%;
   max-width: 720px;
   padding: 7px max(8px, env(safe-area-inset-right)) max(7px, env(safe-area-inset-bottom))

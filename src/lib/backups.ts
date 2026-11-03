@@ -10,6 +10,8 @@ import type {
 import { MUSCLE_GROUPS, validateProgramDraft } from './programBuilder'
 import { getExerciseMetric } from './setMetrics'
 import { hasLoggedSetData } from './sessions'
+import { readRehabData, rehabTables, unfinishedSession } from '../features/physio/repository'
+import { validateRehabData } from '../features/physio/validation'
 
 export const MAX_BACKUP_BYTES = 25 * 1024 * 1024
 
@@ -19,6 +21,9 @@ export interface BackupSummary {
   completedSessionCount: number
   activeSessionCount: number
   alternativeCount: number
+  physioSessionCount: number
+  physioPlanCount: number
+  physioCheckInCount: number
 }
 
 export interface BackupRestoreResult extends BackupSummary {
@@ -34,6 +39,7 @@ export async function createBackup(): Promise<LiftLogBackup> {
       liftLogDb.sessions,
       liftLogDb.alternatives,
       liftLogDb.settings,
+      ...rehabTables(),
     ],
     async () => {
       const settings = await liftLogDb.settings.get('app')
@@ -42,14 +48,15 @@ export async function createBackup(): Promise<LiftLogBackup> {
         programVersions: await liftLogDb.programVersions.toArray(),
         sessions: await liftLogDb.sessions.toArray(),
         alternatives: await liftLogDb.alternatives.toArray(),
+        rehab: await readRehabData(),
       }
     },
   )
 
   return {
     format: 'liftlog-backup',
-    schemaVersion: 1,
-    appVersion: '0.11.0',
+    schemaVersion: 2,
+    appVersion: '0.12.0',
     createdAt: new Date().toISOString(),
     data,
   }
@@ -70,10 +77,12 @@ export function parseBackup(raw: string): LiftLogBackup {
 
   assertRecord(value, 'Backup')
   assertEqual(value.format, 'liftlog-backup', 'Backup format is not supported.')
-  assertEqual(value.schemaVersion, 1, 'Backup schema version is not supported.')
+  if (value.schemaVersion !== 1 && value.schemaVersion !== 2) throw new Error('Backup schema version is not supported.')
   assertString(value.appVersion, 'Backup app version')
   assertDate(value.createdAt, 'Backup creation date')
   assertRecord(value.data, 'Backup data')
+  if (value.schemaVersion === 2) validateRehabData(value.data.rehab)
+  else if (value.data.rehab !== undefined) throw new Error('Legacy backups cannot contain physio data.')
   assertArray(value.data.programVersions, 'Program versions')
   assertArray(value.data.sessions, 'Sessions')
   assertArray(value.data.alternatives, 'Alternatives')
@@ -162,14 +171,20 @@ export function parseBackup(raw: string): LiftLogBackup {
 
 export function summarizeBackup(backup: LiftLogBackup): BackupSummary {
   return {
-    programCount: new Set(backup.data.programVersions.map((version) => version.programId)).size,
+    programCount: new Set(
+      backup.data.programVersions.map((version) => version.programId),
+    ).size,
     versionCount: backup.data.programVersions.length,
     completedSessionCount: backup.data.sessions.filter(
       (session) => session.status === 'completed',
     ).length,
-    activeSessionCount: backup.data.sessions.filter((session) => session.status === 'active')
-      .length,
+    activeSessionCount: backup.data.sessions.filter(
+      (session) => session.status === 'active',
+    ).length,
     alternativeCount: backup.data.alternatives.length,
+    physioSessionCount: backup.data.rehab?.rehabSessions.length ?? 0,
+    physioPlanCount: backup.data.rehab?.rehabPlanVersions.length ?? 0,
+    physioCheckInCount: backup.data.rehab?.rehabCheckIns.length ?? 0,
   }
 }
 
@@ -178,13 +193,17 @@ export async function restoreBackup(
   mode: BackupRestoreMode,
 ): Promise<BackupRestoreResult> {
   backup = parseBackup(serializeBackup(backup))
-  if (mode !== 'merge' && mode !== 'replace') throw new Error('Choose merge or replace for the backup restore.')
+  if (mode !== 'merge' && mode !== 'replace')
+    throw new Error('Choose merge or replace for the backup restore.')
   const summary = summarizeBackup(backup)
   const latestIncomingVersion = backup.data.programVersions
     .slice()
     .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0]
-  const preferredProgramId = backup.data.sessions.find((session) => session.status === 'active')?.programId
-    ?? backup.data.activeProgramId ?? latestIncomingVersion.programId
+  const preferredProgramId =
+    backup.data.sessions.find((session) => session.status === 'active')
+      ?.programId ??
+    backup.data.activeProgramId ??
+    latestIncomingVersion.programId
 
   await liftLogDb.transaction(
     'rw',
@@ -193,10 +212,59 @@ export async function restoreBackup(
       liftLogDb.sessions,
       liftLogDb.alternatives,
       liftLogDb.settings,
+      ...rehabTables(),
     ],
     async () => {
-      if (await liftLogDb.sessions.where('status').equals('active').count() > 0) {
-        throw new Error('Finish or discard the active workout before restoring a backup.')
+      const currentRehab = await readRehabData()
+      if (unfinishedSession(currentRehab))
+        throw new Error(
+          'Finish the unfinished physio session before restoring a backup.',
+        )
+      if (
+        (await liftLogDb.sessions.where('status').equals('active').count()) > 0
+      ) {
+        throw new Error(
+          'Finish or discard the active workout before restoring a backup.',
+        )
+      }
+      if (backup.schemaVersion === 2 && backup.data.rehab) {
+        const incoming = backup.data.rehab
+        if (mode === 'replace') {
+          for (const table of rehabTables()) await table.clear()
+          await liftLogDb.rehabPlanVersions.bulkAdd(incoming.rehabPlanVersions)
+          await liftLogDb.rehabDayPlans.bulkAdd(incoming.rehabDayPlans)
+          await liftLogDb.rehabSessions.bulkAdd(incoming.rehabSessions)
+          await liftLogDb.rehabCheckIns.bulkAdd(incoming.rehabCheckIns)
+          await liftLogDb.rehabSettings.bulkAdd(incoming.rehabSettings)
+        } else {
+          const merged = { ...currentRehab }
+          for (const key of Object.keys(
+            incoming,
+          ) as (keyof typeof incoming)[]) {
+            const existing = currentRehab[key] as { id: string }[]
+            const additions = (incoming[key] as { id: string }[]).filter(
+              (item) => {
+                const local = existing.find((entry) => entry.id === item.id)
+                if (
+                  local &&
+                  JSON.stringify(canonicalValue(local)) !==
+                    JSON.stringify(canonicalValue(item))
+                )
+                  throw new Error(
+                    `Physio conflict in ${key}, record ${item.id}. Nothing was imported. Keep both backup files and review before replacing.`,
+                  )
+                return !local
+              },
+            )
+            Object.assign(merged, { [key]: [...existing, ...additions] })
+          }
+          validateRehabData(merged)
+          await liftLogDb.rehabPlanVersions.bulkPut(merged.rehabPlanVersions)
+          await liftLogDb.rehabDayPlans.bulkPut(merged.rehabDayPlans)
+          await liftLogDb.rehabSessions.bulkPut(merged.rehabSessions)
+          await liftLogDb.rehabCheckIns.bulkPut(merged.rehabCheckIns)
+          await liftLogDb.rehabSettings.bulkPut(merged.rehabSettings)
+        }
       }
       if (mode === 'replace') {
         await Promise.all([
@@ -216,27 +284,34 @@ export async function restoreBackup(
         return
       }
 
-      const [existingVersions, existingSessions, existingAlternatives] = await Promise.all([
-        liftLogDb.programVersions.toArray(),
-        liftLogDb.sessions.toArray(),
-        liftLogDb.alternatives.toArray(),
-      ])
-      const { versionsToAdd: importedVersions, versionNumberMap } = mergeProgramVersions(
-        existingVersions,
-        backup.data.programVersions,
-      )
+      const [existingVersions, existingSessions, existingAlternatives] =
+        await Promise.all([
+          liftLogDb.programVersions.toArray(),
+          liftLogDb.sessions.toArray(),
+          liftLogDb.alternatives.toArray(),
+        ])
+      const { versionsToAdd: importedVersions, versionNumberMap } =
+        mergeProgramVersions(existingVersions, backup.data.programVersions)
       const versionsToAdd = preserveCurrentProgramVersions(
         existingVersions,
         importedVersions,
       )
-      const existingBySessionId = new Map(existingSessions.map((session) => [session.id, session]))
-      const existingByAlternativeId = new Map(existingAlternatives.map((alternative) => [alternative.id, alternative]))
+      const existingBySessionId = new Map(
+        existingSessions.map((session) => [session.id, session]),
+      )
+      const existingByAlternativeId = new Map(
+        existingAlternatives.map((alternative) => [
+          alternative.id,
+          alternative,
+        ]),
+      )
       const sessionsToSave = backup.data.sessions
         .map((session) => ({
           ...session,
           programVersion:
-            versionNumberMap.get(`${session.programId}:${session.programVersion}`) ??
-            session.programVersion,
+            versionNumberMap.get(
+              `${session.programId}:${session.programVersion}`,
+            ) ?? session.programVersion,
         }))
         .filter((session) => {
           const local = existingBySessionId.get(session.id)
@@ -246,31 +321,59 @@ export async function restoreBackup(
             local.programVersion !== session.programVersion ||
             local.workoutTemplateId !== session.workoutTemplateId
           ) {
-            throw new Error('A backup session id conflicts with a different local workout.')
+            throw new Error(
+              'A backup session id conflicts with a different local workout.',
+            )
           }
-          if (local.status === 'completed' && session.status === 'active') return false
-          return (local.status === 'active' && session.status === 'completed') || Date.parse(session.updatedAt) > Date.parse(local.updatedAt)
+          if (local.status === 'completed' && session.status === 'active')
+            return false
+          return (
+            (local.status === 'active' && session.status === 'completed') ||
+            Date.parse(session.updatedAt) > Date.parse(local.updatedAt)
+          )
         })
       const mergedSessions = new Map(existingBySessionId)
-      sessionsToSave.forEach((session) => mergedSessions.set(session.id, session))
-      if ([...mergedSessions.values()].filter((session) => session.status === 'active').length > 1) {
-        throw new Error('Finish the active workout before merging another active workout.')
+      sessionsToSave.forEach((session) =>
+        mergedSessions.set(session.id, session),
+      )
+      if (
+        [...mergedSessions.values()].filter(
+          (session) => session.status === 'active',
+        ).length > 1
+      ) {
+        throw new Error(
+          'Finish the active workout before merging another active workout.',
+        )
       }
-      const alternativesToSave = backup.data.alternatives.flatMap((alternative) => {
-        const local = existingByAlternativeId.get(alternative.id)
-        if (!local) return [alternative]
-        if (local.programId !== alternative.programId || local.templateExerciseId !== alternative.templateExerciseId) {
-          throw new Error('A backup alternative id conflicts with a different local exercise.')
-        }
-        return Date.parse(alternative.lastUsedAt) > Date.parse(local.lastUsedAt)
-          ? [{ ...alternative, timesUsed: Math.max(local.timesUsed, alternative.timesUsed) }]
-          : []
-      })
+      const alternativesToSave = backup.data.alternatives.flatMap(
+        (alternative) => {
+          const local = existingByAlternativeId.get(alternative.id)
+          if (!local) return [alternative]
+          if (
+            local.programId !== alternative.programId ||
+            local.templateExerciseId !== alternative.templateExerciseId
+          ) {
+            throw new Error(
+              'A backup alternative id conflicts with a different local exercise.',
+            )
+          }
+          return Date.parse(alternative.lastUsedAt) >
+            Date.parse(local.lastUsedAt)
+            ? [
+                {
+                  ...alternative,
+                  timesUsed: Math.max(local.timesUsed, alternative.timesUsed),
+                },
+              ]
+            : []
+        },
+      )
 
       if (versionsToAdd.length > 0) {
         await liftLogDb.programVersions.bulkAdd(versionsToAdd)
       }
-      if (sessionsToSave.length > 0) await liftLogDb.sessions.bulkPut(sessionsToSave)
+      if (sessionsToSave.length > 0)
+        await liftLogDb.sessions.bulkPut(sessionsToSave)
       if (alternativesToSave.length > 0) {
         await liftLogDb.alternatives.bulkPut(alternativesToSave)
       }

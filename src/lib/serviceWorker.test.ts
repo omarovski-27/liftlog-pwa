@@ -79,5 +79,6 @@ describe('service worker installation', () => {
     expect(cachedUrls).toContain('https://example.com/liftlog-pwa/assets/app.css')
     expect(cachedUrls).toContain('https://example.com/liftlog-pwa/assets/app.js')
     expect(cachedUrls).toContain('https://example.com/liftlog-pwa/manifest.webmanifest')
+    expect(serviceWorker.skipWaiting).not.toHaveBeenCalled()
   })
 })

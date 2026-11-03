@@ -11,12 +11,18 @@ import { createEmptySet, hasLoggedSetData } from '../lib/sessions'
 import { getExercisePrescription } from '../lib/programMetrics'
 import { ProgramDraftError, validateProgramDraft } from '../lib/programBuilder'
 import { readRememberedSessions } from '../lib/sessionRecovery'
+import type { RehabPlanVersion, RehabDayPlan, RehabSession, RehabCheckIn, RehabSettings } from '../features/physio/types'
 
 export class LiftLogDatabase extends Dexie {
   sessions!: Table<WorkoutSession, string>
   alternatives!: Table<ExerciseAlternative, string>
   programVersions!: Table<ProgramVersion, string>
   settings!: Table<AppSettings, string>
+  rehabPlanVersions!: Table<RehabPlanVersion, string>
+  rehabDayPlans!: Table<RehabDayPlan, string>
+  rehabSessions!: Table<RehabSession, string>
+  rehabCheckIns!: Table<RehabCheckIn, string>
+  rehabSettings!: Table<RehabSettings, string>
 
   constructor(name = 'liftlog') {
     super(name)
@@ -119,6 +125,13 @@ export class LiftLogDatabase extends Dexie {
           })),
         )
       }
+    })
+    this.version(8).stores({
+      rehabPlanVersions: 'id, planId, &[planId+version], createdAt',
+      rehabDayPlans: 'id, planId, planVersionId, &[planId+localDate], localDate',
+      rehabSessions: 'id, &dayPlanId, status, updatedAt',
+      rehabCheckIns: 'id, localDate, sessionId',
+      rehabSettings: 'id',
     })
   }
 }

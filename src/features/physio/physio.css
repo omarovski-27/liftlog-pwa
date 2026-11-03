@@ -1,0 +1,150 @@
+.physio-view {
+  overflow-wrap: anywhere;
+}
+.physio-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+  margin: 16px 0;
+}
+.physio-tabs button {
+  min-width: 0;
+  padding: 12px 2px;
+  border: 1px solid #d4d4d4;
+  background: transparent;
+  color: inherit;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 0.85rem;
+}
+.physio-tabs button[aria-current] {
+  background: #e8eddf;
+  color: #263427;
+  border-color: #7c8e62;
+}
+.physio-card {
+  border: 1px solid #d4d4d4;
+  border-radius: 12px;
+  padding: 16px;
+  margin: 16px 0;
+  min-width: 0;
+}
+.physio-card h2 {
+  font-size: 1.15rem;
+  margin: 0 0 12px;
+}
+.physio-card p {
+  line-height: 1.5;
+}
+.physio-view label {
+  display: grid;
+  gap: 6px;
+  margin: 12px 0;
+  font-size: 0.9rem;
+}
+.physio-view input,
+.physio-view select,
+.physio-view textarea {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 10px;
+  border: 1px solid #aaa;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+.physio-view textarea {
+  min-height: 72px;
+}
+.physio-view .physio-check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.physio-check input,
+.physio-days input {
+  width: auto;
+}
+.physio-view fieldset {
+  min-width: 0;
+  border: 0;
+  padding: 0;
+  margin: 16px 0;
+}
+.physio-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 12px;
+}
+.physio-days {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.physio-days label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.physio-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
+}
+.physio-view button {
+  min-height: 42px;
+  cursor: pointer;
+}
+.physio-view button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+.physio-actions button,
+.physio-card > button,
+.physio-view fieldset > button {
+  padding: 10px 12px;
+  border: 1px solid #999;
+  border-radius: 8px;
+  font: inherit;
+  color: inherit;
+  background: transparent;
+}
+.physio-exercise {
+  border-top: 1px solid #d4d4d4;
+  padding: 14px 0;
+}
+.physio-view summary {
+  cursor: pointer;
+  line-height: 1.5;
+  font-weight: 600;
+}
+.physio-view summary span {
+  display: block;
+  font-size: 0.8rem;
+  font-weight: 400;
+}
+.physio-info {
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+.physio-info a {
+  color: inherit;
+  text-decoration: underline;
+  display: inline-block;
+  padding: 8px 0;
+}
+.physio-history-entry {
+  border-top: 1px solid #ddd;
+  padding-top: 12px;
+  margin-top: 12px;
+}
+.physio-file input {
+  margin-top: 8px;
+}
+.physio-view [role='alert'] {
+  overflow-wrap: anywhere;
+}

@@ -26,8 +26,20 @@ A phone-first progressive overload log for structured lifting programs. The app 
 - Full JSON backup export with validated merge or exact replacement restore.
 - Installable PWA metadata and an offline app-shell cache.
 - In-app phone installation guidance with Android prompting, iPhone steps, and the current app link.
+- A separate Physio section with private library import, candidate video links, editable weekly routines, partial session recovery, symptom check-ins, and history.
+- Additive database version 8 and full-app backup version 2. Legacy v1 restores affect lifting only; divergent physio records stop a merge for review.
 
 All workout records stay on the device. There is no account or paid service.
+
+## Physio
+
+Open **Physio** and select a private JSON inventory/library. Review its exercises and start date before importing. A source inventory supplies no automatic weekly schedule or missing dose. In **Plan**, enter the instructions you have, explicitly confirm variants, choose dispositions and weekdays, then save an immutable version. Manual recording works without inventing targets. Pause to resume the same session; finish preserves partial and unrecorded outcomes. The first release supports one session per local day.
+
+Demonstrations are imported educational candidates, labeled with provider, variant uncertainty, metadata check date and review status. They require internet; playback, captions and therapist equivalence are not guaranteed by a working link. Personal exercise lists, doses, screenshots and researched associations must remain outside this public repository. Use synthetic fixtures only.
+
+Backups include all five physio stores. Import is locked while either domain has an unfinished session. A replacement downloads a pre-restore backup first; keep it. A legacy replacement explicitly replaces lifting only. Devices have separate local stores, so transfer an exported file manually to use it on another device. This is not automatic sync.
+
+Unknown observations remain unknown; there is no recovery score or automatic clinical progression. More advanced scheduling (multiple daily doses, rescheduling, shorter approved templates), timers, clinical reports and symptom/function charts are not implemented in this release. Updates wait until existing app windows close instead of forcing an active session to reload.
 
 ## Run Locally
 
