@@ -1,4 +1,4 @@
-const CACHE_NAME = 'liftlog-shell-v13'
+const CACHE_NAME = 'liftlog-shell-v14'
 const APP_SHELL = [
   './',
   './index.html',
@@ -58,7 +58,7 @@ self.addEventListener('fetch', (event) => {
   const scopeUrl = new URL(self.registration.scope)
   const requestUrl = new URL(request.url)
 
-  if (request.method !== 'GET' || requestUrl.origin !== scopeUrl.origin || !requestUrl.pathname.startsWith(scopeUrl.pathname)) {
+  if (request.method !== 'GET' || request.cache === 'no-store' || requestUrl.origin !== scopeUrl.origin || !requestUrl.pathname.startsWith(scopeUrl.pathname)) {
     return
   }
 
