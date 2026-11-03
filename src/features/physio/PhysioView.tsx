@@ -24,6 +24,7 @@ import {
   type RehabSession,
 } from './types'
 import { parseInventory, safeDemoUrl, validateRehabData } from './validation'
+import { PrivateSetup } from './PrivateSetupPanel'
 import './physio.css'
 
 const groupNames = {
@@ -377,9 +378,10 @@ export function PhysioView({
           </div>
         </section>
       ) : null}
-      {!plan ? (
+      {!plan && !pendingImport ? <PrivateSetup disabled={busy || Boolean(recovery)} onReady={setPendingImport} /> : null}
+      {!plan && !pendingImport ? (
         <section className="physio-card">
-          <h2>Add your private exercise list</h2>
+          <h2>Or use a private file</h2>
           <p>
             Import the source inventory JSON. It stays on this device. Targets
             and frequency that are absent from your source remain unconfirmed.
@@ -435,7 +437,7 @@ export function PhysioView({
                 })
               }
             >
-              Import privately
+              Add exercises
             </button>
             <button type="button" onClick={() => setPendingImport(null)}>
               Cancel
