@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   currentPlan,
+  ensureDefaultRehabPlan,
   localDay,
   readRehabData,
   RehabConflictError,
@@ -24,7 +25,7 @@ import {
   type RehabSession,
 } from './types'
 import { parseInventory, safeDemoUrl, validateRehabData } from './validation'
-import { PrivateSetup } from './PrivateSetupPanel'
+import { exerciseDemonstration } from './defaultLibrary'
 import './physio.css'
 
 const groupNames = {
@@ -83,7 +84,7 @@ export function PhysioView({
 
   useEffect(() => {
     alive.current = true
-    void readRehabData()
+    void ensureDefaultRehabPlan()
       .then((snapshot) => {
         if (!alive.current) return
         setData(snapshot)
@@ -378,10 +379,9 @@ export function PhysioView({
           </div>
         </section>
       ) : null}
-      {!plan && !pendingImport ? <PrivateSetup disabled={busy || Boolean(recovery)} onReady={setPendingImport} /> : null}
       {!plan && !pendingImport ? (
         <section className="physio-card">
-          <h2>Or use a private file</h2>
+          <h2>Open a saved exercise library</h2>
           <p>
             Import the source inventory JSON. It stays on this device. Targets
             and frequency that are absent from your source remain unconfirmed.
@@ -876,6 +876,7 @@ function doseText(dose: Dose) {
     : 'Dose not confirmed'
 }
 function ExerciseInfo({ exercise: e }: { exercise: RehabExercise }) {
+  const demo = exerciseDemonstration(e)
   return (
     <div className="physio-info">
       <p>
@@ -896,10 +897,10 @@ function ExerciseInfo({ exercise: e }: { exercise: RehabExercise }) {
         <p>Source notes: {e.sourceInstructions}</p>
       ) : null}
       {e.notes ? <p>Your notes: {e.notes}</p> : null}
-      {e.demo ? (
+      {demo ? (
         <>
           <a
-            href={safeDemoUrl(e.demo.url)}
+            href={safeDemoUrl(demo.url)}
             target="_blank"
             rel="noopener noreferrer"
             referrerPolicy="no-referrer"
@@ -907,13 +908,13 @@ function ExerciseInfo({ exercise: e }: { exercise: RehabExercise }) {
             Watch {e.name} video ↗
           </a>
           <p>
-            {e.demo.title} · {e.demo.provider}
+            {demo.title} · {demo.provider}
           </p>
           <p>
-            {e.demo.status} — confirm intended variant. {e.demo.variant}
+            {demo.status} — confirm intended variant. {demo.variant}
           </p>
           <small>
-            Metadata checked {e.demo.checkedOn}; {e.demo.reviewer}. Online only.
+            Metadata checked {demo.checkedOn}; {demo.reviewer}. Online only.
             Captions availability unknown. No autoplay.
           </small>
         </>
@@ -936,7 +937,7 @@ function PlanExercise({
   onChange: (e: RehabExercise) => void
   onMove: (direction: number) => void
 }) {
-  const [url, setUrl] = useState(e.demo?.url ?? '')
+  const [url, setUrl] = useState(exerciseDemonstration(e)?.url ?? '')
   const [urlError, setUrlError] = useState('')
   return (
     <details className="physio-exercise">
