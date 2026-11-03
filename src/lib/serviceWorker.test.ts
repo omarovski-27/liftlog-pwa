@@ -12,7 +12,7 @@ interface InstallEvent {
 type ServiceWorkerListener = (event: InstallEvent) => void
 
 describe('service worker installation', () => {
-  it('leaves no-store setup downloads to the browser without reading or writing CacheStorage', () => {
+  it('leaves no-store downloads to the browser without reading or writing CacheStorage', () => {
     const source = readFileSync(resolve(process.cwd(), 'public/service-worker.js'), 'utf8')
     const listeners = new Map<string, (event: unknown) => void>()
     const openCache = vi.fn()
@@ -23,7 +23,7 @@ describe('service worker installation', () => {
       caches: { open: openCache },
       self: { registration: { scope: 'https://example.com/liftlog-pwa/' }, addEventListener: (name: string, listener: (event: unknown) => void) => listeners.set(name, listener) },
     })
-    listeners.get('fetch')!({ request: { method: 'GET', cache: 'no-store', url: 'https://example.com/liftlog-pwa/setup/physio-v1.enc.json' }, respondWith })
+    listeners.get('fetch')!({ request: { method: 'GET', cache: 'no-store', url: 'https://example.com/liftlog-pwa/fresh-data.json' }, respondWith })
     expect(respondWith).not.toHaveBeenCalled()
     expect(openCache).not.toHaveBeenCalled()
     expect(fetch).not.toHaveBeenCalled()

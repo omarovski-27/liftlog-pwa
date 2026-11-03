@@ -8,6 +8,7 @@ import {
   type RehabCheckIn,
 } from './types'
 import { validatePlan, validateRehabData } from './validation'
+import { defaultExercises } from './defaultLibrary'
 
 export const rehabTables = () => [
   liftLogDb.rehabPlanVersions,
@@ -58,6 +59,24 @@ export function currentPlan(
 }
 export const unfinishedSession = (data: RehabData) =>
   data.rehabSessions.find((s) => s.status === 'active' || s.status === 'paused')
+
+export async function ensureDefaultRehabPlan(): Promise<RehabData> {
+  return liftLogDb.transaction('rw', rehabTables(), async () => {
+    const data = await readRehabData()
+    // An existing library, restore or session always takes precedence over defaults.
+    if (Object.values(data).some(records => records.length > 0)) return data
+    const now = new Date().toISOString()
+    const plan: RehabPlanVersion = {
+      id: crypto.randomUUID(), planId: crypto.randomUUID(), version: 1,
+      createdAt: now, effectiveDate: localDay(),
+      source: 'private source inventory', exercises: defaultExercises(),
+    }
+    validatePlan(plan)
+    await liftLogDb.rehabPlanVersions.add(plan)
+    await liftLogDb.rehabSettings.add({ id: 'physio', activePlanId: plan.planId, timezone: 'Asia/Amman', updatedAt: now })
+    return readRehabData()
+  })
+}
 export async function savePlan(
   exercises: RehabExercise[],
   previous?: RehabPlanVersion,
