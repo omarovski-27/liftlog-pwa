@@ -63,3 +63,10 @@ Each group must contain exactly one `A` exercise and one `B` exercise within its
 ```
 
 Program JSON never carries database ids or workout history. LiftLog generates new identities, opens the imported prescription in the visual builder, and saves it only after review.
+# Physio import (separate from lifting)
+
+The Physio tab accepts `liftlog-physio-source-inventory` version 1 or `liftlog-physio-library` version 1. These files must never go through the lifting importer. Both are private, local-only imports with a review before activation; neither creates historical completions.
+
+The library envelope is `{ "format": "liftlog-physio-library", "schemaVersion": 1, "exercises": [...] }`. Exercise records follow `RehabExercise` in `src/features/physio/types.ts`; `src/features/physio/validation.ts` is authoritative. All fields are required, unknown numeric doses use `null`, weekdays use Sunday=0 through Saturday=6, and IDs must be stable and unique. Unknown fields, invalid dates, unsupported versions, and unsafe/non-video URLs are rejected. Direct HTTPS YouTube and Vimeo links are supported, with tracking parameters stripped when opened. Demo metadata includes title, provider, variant, checked date, reviewer and candidate/user/clinician source status; status is provenance, not proof of technical review.
+
+Do not publish real library examples, prescribed doses, photos, personal notes, symptoms or backups in this repository. Source inventories import as awaiting clarification with no weekday assignments and no variant confirmation. Custom libraries may carry explicit user configuration; accepting a file does not convert it into clinician approval.

@@ -1,7 +1,9 @@
 import type { TrainingProgram } from './program'
 import type { ExerciseAlternative, WorkoutSession } from './session'
+import type { RehabData } from '../features/physio/types'
 
-export type ProgramVersionReason = 'seed' | 'create' | 'edit' | 'import' | 'restore'
+export type ProgramVersionReason =
+  'seed' | 'create' | 'edit' | 'import' | 'restore'
 
 export interface ProgramVersion {
   id: string
@@ -16,7 +18,7 @@ export interface ProgramVersion {
 
 export interface LiftLogBackup {
   format: 'liftlog-backup'
-  schemaVersion: 1
+  schemaVersion: 1 | 2
   appVersion: string
   createdAt: string
   data: {
@@ -24,6 +26,7 @@ export interface LiftLogBackup {
     programVersions: ProgramVersion[]
     sessions: WorkoutSession[]
     alternatives: ExerciseAlternative[]
+    rehab?: RehabData
   }
 }
 

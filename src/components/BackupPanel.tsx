@@ -45,7 +45,9 @@ export function BackupPanel({
     setError(null)
     try {
       const backup = await createBackup()
-      const blob = new Blob([serializeBackup(backup)], { type: 'application/json' })
+      const blob = new Blob([serializeBackup(backup)], {
+        type: 'application/json',
+      })
       const url = URL.createObjectURL(blob)
       const anchor = document.createElement('a')
       anchor.href = url
@@ -54,8 +56,10 @@ export function BackupPanel({
       anchor.click()
       anchor.remove()
       window.setTimeout(() => URL.revokeObjectURL(url), 0)
+      return true
     } catch {
       setError('The backup could not be exported.')
+      return false
     } finally {
       setBusy(false)
     }
@@ -86,10 +90,19 @@ export function BackupPanel({
     setBusy(true)
     setError(null)
     try {
+      if (restoreMode === 'replace' && !(await exportBackup()))
+        throw new Error(
+          'Restore stopped because the current backup could not be exported.',
+        )
+      setBusy(true)
       await onRestoreBackup(pendingBackup.backup, restoreMode)
       setPendingBackup(null)
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'The backup could not be restored.')
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : 'The backup could not be restored.',
+      )
     } finally {
       setBusy(false)
     }
@@ -200,27 +213,31 @@ export function BackupPanel({
             <div className="restore-mode" aria-label="Restore mode">
               <button
                 aria-pressed={restoreMode === 'merge'}
-                disabled={busy}
-                onClick={() => setRestoreMode('merge')}
-                type="button"
-              >
-                Merge
-              </button>
-              <button
-                aria-pressed={restoreMode === 'replace'}
-                disabled={busy}
-                onClick={() => setRestoreMode('replace')}
-                type="button"
-              >
-                Replace all
-              </button>
-            </div>
+              disabled={busy}
+              onClick={() => setRestoreMode('merge')}
+              type="button"
+            >
+              Merge
+            </button>
+            <button
+              aria-pressed={restoreMode === 'replace'}
+              disabled={busy}
+              onClick={() => setRestoreMode('replace')}
+              type="button"
+            >
+              {pendingBackup.backup.schemaVersion === 1
+                ? 'Replace lifting only'
+                : 'Replace all'}
+            </button>
+          </div>
 
-            <p className={restoreMode === 'replace' ? 'restore-warning' : ''}>
-              {restoreMode === 'merge'
-                ? 'Adds backup records and updates older copies of the same workout.'
-                : 'Removes data on this device, then restores the backup exactly.'}
-            </p>
+          <p className={restoreMode === 'replace' ? 'restore-warning' : ''}>
+            {restoreMode === 'merge'
+              ? 'Adds backup records and updates older copies of the same lifting workout. Divergent physio records stop the entire import for review.'
+              : pendingBackup.backup.schemaVersion === 1
+                ? 'Replaces lifting data only. This legacy file contains no physio data; your physio data stays on this device. A current backup will download first.'
+                : 'Replaces ALL lifting and physio plans, sessions and symptom observations on this device. A current backup will download first; keep it before proceeding.'}
+          </p>
 
             <div className="dialog-actions">
               <button
@@ -264,6 +281,18 @@ function BackupContents({ summary }: { summary: BackupSummary }) {
       <div>
         <dt>Active</dt>
         <dd>{summary.activeSessionCount}</dd>
+      </div>
+      <div>
+        <dt>Physio sessions</dt>
+        <dd>{summary.physioSessionCount}</dd>
+      </div>
+      <div>
+        <dt>Physio plans</dt>
+        <dd>{summary.physioPlanCount}</dd>
+      </div>
+      <div>
+        <dt>Check-ins</dt>
+        <dd>{summary.physioCheckInCount}</dd>
       </div>
     </dl>
   )

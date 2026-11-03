@@ -1,6 +1,6 @@
-import { Dumbbell, History, Rows3 } from 'lucide-react'
+import { Dumbbell, History, Rows3, HeartPulse } from 'lucide-react'
 
-export type AppTab = 'train' | 'history' | 'program'
+export type AppTab = 'train' | 'physio' | 'history' | 'program'
 
 interface BottomNavProps {
   activeTab: AppTab
@@ -13,6 +13,7 @@ const items: Array<{
   icon: typeof Dumbbell
 }> = [
   { id: 'train', label: 'Train', icon: Dumbbell },
+  { id: 'physio', label: 'Physio', icon: HeartPulse },
   { id: 'history', label: 'History', icon: History },
   { id: 'program', label: 'Program', icon: Rows3 },
 ]

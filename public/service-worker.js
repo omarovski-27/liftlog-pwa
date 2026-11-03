@@ -1,4 +1,4 @@
-const CACHE_NAME = 'liftlog-shell-v12'
+const CACHE_NAME = 'liftlog-shell-v13'
 const APP_SHELL = [
   './',
   './index.html',
@@ -34,7 +34,6 @@ self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then(async (cache) => {
       await cache.addAll(await getBuildAssets())
-      await self.skipWaiting()
     }),
   )
 })

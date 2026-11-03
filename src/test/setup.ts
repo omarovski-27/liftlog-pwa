@@ -10,6 +10,11 @@ beforeEach(async () => {
   await liftLogDb.alternatives.clear()
   await liftLogDb.programVersions.clear()
   await liftLogDb.settings.clear()
+  await liftLogDb.rehabPlanVersions.clear()
+  await liftLogDb.rehabDayPlans.clear()
+  await liftLogDb.rehabSessions.clear()
+  await liftLogDb.rehabCheckIns.clear()
+  await liftLogDb.rehabSettings.clear()
 })
 
 afterEach(() => {

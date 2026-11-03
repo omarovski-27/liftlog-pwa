@@ -252,13 +252,16 @@ describe('program versions and backups', () => {
 
     const backup = parseBackup(serializeBackup(await createBackup()))
 
-    expect(backup.appVersion).toBe('0.11.0')
+    expect(backup.appVersion).toBe('0.12.0')
     expect(summarizeBackup(backup)).toEqual({
       programCount: 1,
       versionCount: 1,
       completedSessionCount: 0,
       activeSessionCount: 1,
       alternativeCount: 1,
+      physioSessionCount: 0,
+      physioPlanCount: 0,
+      physioCheckInCount: 0,
     })
     expect(backup.data.sessions[0].programVersion).toBe(1)
     expect(backup.data.alternatives[0].name).toBe('Plate-loaded chest press')

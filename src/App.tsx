@@ -12,6 +12,9 @@ import { ProgramView } from './components/ProgramView'
 import { SessionView } from './components/SessionView'
 import { TrainView } from './components/TrainView'
 import { ModalFrame } from './components/ModalFrame'
+import { PhysioView, PhysioHistory } from './features/physio/PhysioView'
+import { readRehabData, rehabTables } from './features/physio/repository'
+import { emptyRehabData } from './features/physio/types'
 import { chestSpecializationProgram } from './data/chestSpecializationProgram'
 import {
   deleteSession,
@@ -82,6 +85,10 @@ function App() {
   const [programVersions, setProgramVersions] = useState<ProgramVersion[]>([])
   const [programLibrary, setProgramLibrary] = useState<ProgramVersion[]>([])
   const [activeTab, setActiveTab] = useState<AppTab>('train')
+  const [physioUnsaved, setPhysioUnsaved] = useState(false)
+  const [historyDomain, setHistoryDomain] = useState('lifting')
+  const [rehabHistory, setRehabHistory] = useState(emptyRehabData)
+  const [physioGeneration, setPhysioGeneration] = useState(0)
   const [sessions, setSessions] = useState<WorkoutSession[]>([])
   const [allSessions, setAllSessions] = useState<WorkoutSession[]>([])
   const [alternatives, setAlternatives] = useState<ExerciseAlternative[]>([])
@@ -445,6 +452,7 @@ function App() {
     const snapshot = await changeProgramWorkspace(async () => (await restoreBackup(backup, mode)).preferredProgramId)
     replaceRememberedSessions(snapshot.allSessions)
     applyWorkspace(snapshot)
+    setPhysioGeneration(value => value + 1)
     setStorageError(null)
     setNotice(mode === 'merge' ? 'Backup merged' : 'Backup restored')
   }
@@ -657,6 +665,7 @@ function App() {
   return (
     <main className="app-shell">
       <div className="app-content">
+        <div hidden={activeTab !== 'physio'}><PhysioView key={physioGeneration} onUnsavedChange={setPhysioUnsaved} /></div>
         {activeTab === 'train' ? (
           <TrainView
             nextWorkout={nextWorkout}
@@ -671,12 +680,31 @@ function App() {
           />
         ) : null}
         {activeTab === 'history' ? (
-          <HistoryView
-            onEditSession={(session) => setOpenSessionId(session.id)}
-            onMergeBackup={(backup) => importBackup(backup, 'merge')}
-            program={program}
-            sessions={allSessions}
-          />
+          <>
+            <label className="history-domain">
+              History category
+              <select
+                aria-label="History category"
+                value={historyDomain}
+                onChange={(event) => setHistoryDomain(event.target.value)}
+              >
+                <option value="lifting">Lifting</option>
+                <option value="physio">Physio</option>
+                <option value="all">All</option>
+              </select>
+            </label>
+            {historyDomain !== 'physio' ? (
+              <HistoryView
+                onEditSession={(session) => setOpenSessionId(session.id)}
+                onMergeBackup={(backup) => importBackup(backup, 'merge')}
+                program={program}
+                sessions={allSessions}
+              />
+            ) : null}
+            {historyDomain !== 'lifting' ? (
+              <PhysioHistory data={rehabHistory} />
+            ) : null}
+          </>
         ) : null}
         {activeTab === 'program' ? (
           <ProgramView
@@ -699,7 +727,22 @@ function App() {
           />
         ) : null}
       </div>
-      <BottomNav activeTab={activeTab} onChange={setActiveTab} />
+      <BottomNav
+        activeTab={activeTab}
+        onChange={(tab) => {
+          if (physioUnsaved && tab !== 'physio') {
+            setNotice('Save or cancel physio edits before leaving.')
+            return
+          }
+          if (tab === 'history')
+            void readRehabData()
+              .then(setRehabHistory)
+              .catch(() =>
+                setStorageError('Physio history could not be opened.'),
+              )
+          setActiveTab(tab)
+        }}
+      />
       {notice ? (
         <div className="toast" role="status">
           {notice}
@@ -746,7 +789,7 @@ async function readWorkspace(preferredProgramId: string): Promise<WorkspaceSnaps
 }
 
 async function changeProgramWorkspace(operation: () => Promise<string>): Promise<WorkspaceSnapshot> {
-  return liftLogDb.transaction('rw', [liftLogDb.programVersions, liftLogDb.sessions, liftLogDb.alternatives, liftLogDb.settings], async () => {
+  return liftLogDb.transaction('rw', [liftLogDb.programVersions, liftLogDb.sessions, liftLogDb.alternatives, liftLogDb.settings, ...rehabTables()], async () => {
     if (await liftLogDb.sessions.where('status').equals('active').count() > 0) throw new Error('Finish or discard the active workout before changing programs or restoring data.')
     const snapshot = await readWorkspace(await operation())
     await setActiveProgramId(snapshot.program.id)
