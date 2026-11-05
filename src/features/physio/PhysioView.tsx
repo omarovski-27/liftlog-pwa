@@ -25,7 +25,7 @@ import {
   type RehabSession,
 } from './types'
 import { parseInventory, safeDemoUrl, validateRehabData } from './validation'
-import { exerciseDemonstration } from './defaultLibrary'
+import { exerciseDemonstration, exerciseGroup, exerciseGroupNames } from './defaultLibrary'
 import { ExerciseCard, ExerciseDetails, VideoAction } from './ExerciseCard'
 import { DailyPrograms } from './DailyPrograms'
 import './physio.css'
@@ -806,7 +806,7 @@ export function PhysioView({
               <option value="all">All groups</option>
               {GROUPS.map((g) => (
                 <option key={g} value={g}>
-                  {groupNames[g]}
+                  {exerciseGroupNames[g]}
                 </option>
               ))}
             </select>
@@ -816,8 +816,9 @@ export function PhysioView({
             .filter(
               (e) =>
                 e.name.toLowerCase().includes(search.toLowerCase()) &&
-                (group === 'all' || e.group === group),
+                (group === 'all' || exerciseGroup(e) === group),
             )
+            .sort((a, b) => GROUPS.indexOf(exerciseGroup(a)) - GROUPS.indexOf(exerciseGroup(b)))
             .map((e) => (
               <ExerciseCard exercise={e} key={e.id} />
             ))}

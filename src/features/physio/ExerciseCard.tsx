@@ -1,14 +1,8 @@
 import type { ReactNode } from 'react'
 import { Play, ArrowUpRight } from 'lucide-react'
-import { exerciseDemonstration } from './defaultLibrary'
+import { exerciseDemonstration, exerciseGroup, exerciseGroupNames } from './defaultLibrary'
 import type { Dose, RehabExercise } from './types'
 import { safeDemoUrl } from './validation'
-
-const groupNames = {
-  knee_lower_limb: 'Knee & lower limb',
-  back_core_hip: 'Back & core',
-  shoulder_neck_chest: 'Shoulder & neck',
-}
 
 function doseSummary(dose: Dose) {
   const parts = [
@@ -117,7 +111,7 @@ export function ExerciseCard({
           </span>
         ) : null}
         <div>
-          <span className="physio-eyebrow">{groupNames[exercise.group]}</span>
+          <span className="physio-eyebrow">{exerciseGroupNames[exerciseGroup(exercise)]}</span>
           <h3>{exercise.name}</h3>
         </div>
         {status ? <span className="physio-outcome">{status}</span> : null}

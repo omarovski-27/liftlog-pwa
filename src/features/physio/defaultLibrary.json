@@ -293,7 +293,7 @@
     {
       "id": "true-hip-flexor",
       "name": "True Hip Flexor",
-      "group": "back_core_hip",
+      "group": "knee_lower_limb",
       "disposition": "awaiting clarification",
       "dose": {
         "sets": null,
