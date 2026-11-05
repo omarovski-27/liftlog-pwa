@@ -13,12 +13,31 @@ describe('daily exercise lists', () => {
     const week = weeklyRoutines(exercises)
     expect(week).toHaveLength(7)
     expect(week.map((day) => day.exercises.length)).toEqual([
-      3, 2, 2, 2, 2, 3, 2,
+      7, 4, 0, 5, 7, 4, 5,
     ])
     const assigned = week.flatMap((day) =>
       day.exercises.map((exercise) => exercise.id),
     )
     expect(new Set(assigned).size).toBe(16)
+    expect(week[0].exercises.map((exercise) => exercise.id)).toEqual([
+      'half-kneel-dorsiflexion',
+      'side-lying-clam',
+      'glute-bridge',
+      'lateral-band-walks',
+      'single-leg-balance-step-downs',
+      'single-leg-balance',
+      'toe-towel-crunches',
+    ])
+    expect(week[4].exercises).toEqual(week[0].exercises)
+    expect(week[3].exercises.map((exercise) => exercise.id)).toEqual([
+      'cat-and-camel',
+      'quad-rock-back-deep-breath',
+      'bird-dog',
+      'dead-bug',
+      'front-plank',
+    ])
+    expect(week[6].exercises).toEqual(week[3].exercises)
+    expect(week[5].exercises).toEqual(week[1].exercises)
     expect(
       unassignedExercises(exercises, week)
         .map((exercise) => exercise.id)
@@ -86,14 +105,14 @@ describe('daily exercise lists', () => {
     fireEvent.click(
       await screen.findByRole('button', { name: 'Sunday program' }),
     )
-    await screen.findByRole('heading', { name: 'Knee & hip' })
+    await screen.findByRole('heading', { name: 'Lower limb · knee, hip & foot' })
     const before = await readRehabData()
     expect(
       screen.getByRole('link', { name: 'Watch Glute Bridge video ↗' }),
     ).toBeVisible()
     fireEvent.click(screen.getByRole('button', { name: 'Saturday program' }))
     expect(
-      screen.getByRole('heading', { name: 'Back mobility' }),
+      screen.getByRole('heading', { name: 'Core & back' }),
     ).toBeInTheDocument()
     expect(
       screen.getByRole('link', { name: 'Watch Cat and Camel video ↗' }),
@@ -118,8 +137,12 @@ describe('daily exercise lists', () => {
     )
     const before = await readRehabData()
     expect(
-      before.rehabDayPlans[0].occurrences.map((item) => item.exercise.id),
-    ).toEqual(['half-kneel-dorsiflexion', 'side-lying-clam', 'glute-bridge'])
+      before.rehabDayPlans[0].occurrences.map((item) => item.exercise.id).sort(),
+    ).toEqual(
+      weeklyRoutines(defaultExercises())[0].exercises
+        .map((exercise) => exercise.id)
+        .sort(),
+    )
     expect(
       before.rehabDayPlans[0].occurrences.every((item) => !item.required),
     ).toBe(true)

@@ -12,29 +12,42 @@ export const WEEKDAYS = [
 // A draft organization of the supplied library, not a treatment frequency or dose.
 // Ambiguous variants stay in a separate review list. No personal activity calendar
 // or symptom data is included in this public default.
+const lowerLimb = {
+  title: 'Lower limb · knee, hip & foot',
+  ids: [
+    'half-kneel-dorsiflexion',
+    'side-lying-clam',
+    'glute-bridge',
+    'lateral-band-walks',
+    'single-leg-balance-step-downs',
+    'single-leg-balance',
+    'toe-towel-crunches',
+  ],
+}
+const upperBody = {
+  title: 'Neck & upper body',
+  ids: ['deep-neck-flexion', 'prone-t', 'prone-y', 'foam-roll-chest-expansion'],
+}
+const coreAndBack = {
+  title: 'Core & back',
+  ids: [
+    'cat-and-camel',
+    'quad-rock-back-deep-breath',
+    'bird-dog',
+    'dead-bug',
+    'front-plank',
+  ],
+}
+// Reuse complete region groups so lower-limb or trunk work is never fragmented
+// between different draft lists. Repetition is display-only, not a prescription.
 const rotation = [
-  {
-    title: 'Knee & hip',
-    ids: ['half-kneel-dorsiflexion', 'side-lying-clam', 'glute-bridge'],
-  },
-  { title: 'Neck & upper back', ids: ['deep-neck-flexion', 'prone-t'] },
-  {
-    title: 'Flexible day · balance & foot',
-    ids: ['single-leg-balance', 'toe-towel-crunches'],
-  },
-  { title: 'Core control', ids: ['bird-dog', 'dead-bug'] },
-  {
-    title: 'Knee control',
-    ids: ['single-leg-balance-step-downs', 'lateral-band-walks'],
-  },
-  {
-    title: 'Upper body & trunk',
-    ids: ['prone-y', 'front-plank', 'foam-roll-chest-expansion'],
-  },
-  {
-    title: 'Back mobility',
-    ids: ['cat-and-camel', 'quad-rock-back-deep-breath'],
-  },
+  lowerLimb,
+  upperBody,
+  { title: 'Flexible day · rest or check-in', ids: [] },
+  coreAndBack,
+  lowerLimb,
+  upperBody,
+  coreAndBack,
 ]
 
 export interface DailyRoutine {

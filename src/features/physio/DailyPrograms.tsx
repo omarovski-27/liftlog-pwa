@@ -76,8 +76,10 @@ export function DailyPrograms({
         <details className="physio-rotation-note">
           <summary>Draft grouping · confirm frequency & doses</summary>
           <p>
-            Short groups spread the exercise library across the week. These are
-            suggested lists to review, not confirmed treatment frequency. Use
+            Knee, hip, ankle, foot and balance exercises stay together. Core and
+            back exercises share a group; neck and upper-body work have their own
+            group. Repeated lists are for organization, not confirmed treatment
+            frequency. Use
             your physiotherapist’s instructions for what to perform and how
             often. Missing doses stay blank. Exercises with unclear variants
             remain below for review.
@@ -86,7 +88,7 @@ export function DailyPrograms({
       ) : null}
       {selected.source === 'draft' && selectedDay === 2 ? (
         <p className="physio-flex-note">
-          Rest or check in today. The short list below is optional.
+          Rest or check in today. No exercises are assigned in this draft.
         </p>
       ) : null}
       {hasUnfinished ? (
